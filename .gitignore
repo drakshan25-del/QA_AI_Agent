@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.db
+artifacts/*
+reports/*
+!reports/.gitkeep
+!artifacts/.gitkeep
+.pytest_cache/
+test-results/
+playwright-report/
+.DS_Store
+*.egg-info/
+Langchain_basics/
+docs/
