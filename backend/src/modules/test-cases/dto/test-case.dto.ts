@@ -1,5 +1,4 @@
 import {
-  ArrayNotEmpty,
   IsArray,
   IsInt,
   IsObject,
@@ -7,14 +6,18 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class GenerateTestCasesDto {
-  @ApiProperty({ type: [String] })
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Omit to generate for all project requirements (incl. document-derived).',
+  })
+  @IsOptional()
   @IsArray()
-  @ArrayNotEmpty()
   @IsString({ each: true })
-  requirementIds!: string[];
+  requirementIds?: string[];
 
   @ApiPropertyOptional({ default: 10 })
   @IsOptional()

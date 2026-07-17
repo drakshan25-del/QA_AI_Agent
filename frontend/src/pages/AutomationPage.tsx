@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
+import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -12,14 +12,11 @@ import { Tabs } from '../components/ui/Tabs';
 import { LazyCodeViewer } from '../components/LazyCodeViewer';
 import { DiffViewer } from '../components/DiffViewer';
 import { ApprovalControls } from '../features/approvals/ApprovalControls';
+import { RunLauncher } from '../features/executions/RunLauncher';
 import { ValidationFindings } from '../features/automation/ValidationFindings';
 import { useProjectId } from '../features/projects/hooks';
 import { useProjectEvents } from '../hooks/useProjectEvents';
-import {
-  automationApi,
-  executionsApi,
-  testCasesApi,
-} from '../services/api/endpoints';
+import { automationApi, testCasesApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 import type { ApprovalDecision, GeneratedArtifact } from '../services/api/types';
 import { toDisplayString } from '../lib/sanitize';
@@ -76,29 +73,42 @@ function ArtifactDetail({
   projectId: string;
 }): JSX.Element {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>('code');
+  const [validationJobId, setValidationJobId] = useState<string | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: qk.automation(projectId) });
     void qc.invalidateQueries({ queryKey: qk.automationItem(artifact.id) });
   };
 
+  // Validation is an async job with a live log console (FR-V3-LOG-005).
   const validate = useMutation({
     mutationFn: () => automationApi.validate(artifact.id),
-    onSuccess: invalidate,
+    onSuccess: (res) => {
+      const jobId = (res as { jobId?: string }).jobId;
+      if (jobId) setValidationJobId(jobId);
+      invalidate();
+    },
+  });
+  const overrideValidation = useMutation({
+    mutationFn: () => automationApi.overrideValidation(artifact.id, overrideReason),
+    onSuccess: () => {
+      setOverrideReason('');
+      invalidate();
+    },
   });
   const approve = useMutation({
     mutationFn: (input: { decision: ApprovalDecision; comment: string }) =>
       automationApi.approve(artifact.id, input.decision, input.comment),
     onSuccess: invalidate,
   });
-  const run = useMutation({
-    mutationFn: () =>
-      executionsApi.create({ projectId, automationIds: [artifact.id], browser: 'chromium' }),
-    onSuccess: (res) => navigate(`/executions/${res.id}`),
-  });
 
+  const validated = ['passed', 'passed_with_warnings', 'overridden'].includes(
+    artifact.validationStatus,
+  );
+  const runnable =
+    artifact.approvalStatus === 'approved' && artifact.status === 'active' && validated;
   const traceEntries = Object.entries(artifact.traceability ?? {});
 
   return (
@@ -117,28 +127,64 @@ function ArtifactDetail({
           <Button small loading={validate.isPending} onClick={() => validate.mutate()}>
             Validate
           </Button>
-          <Button
-            small
-            variant="primary"
-            loading={run.isPending}
-            disabled={artifact.approvalStatus !== 'approved' || artifact.status !== 'active'}
-            title={
-              artifact.approvalStatus !== 'approved'
-                ? 'Automation must be approved before execution (FR-AUT-010)'
-                : undefined
-            }
-            onClick={() => run.mutate()}
-          >
-            Run execution
-          </Button>
         </div>
         {validate.isError && <ErrorBanner error={validate.error} />}
-        {run.isError && <ErrorBanner error={run.error} />}
+        {validationJobId && (
+          <div style={{ marginTop: 10 }}>
+            <LiveJobConsole
+              projectId={projectId}
+              jobId={validationJobId}
+              title={`Validating ${artifact.path}`}
+              onFinished={invalidate}
+            />
+          </div>
+        )}
+        {artifact.validationStatus === 'failed' && (
+          <div style={{ marginTop: 10 }}>
+            <Banner kind="warn">
+              Validation failed. An authorised role can record a governed
+              validation exception (FR-V3-ENT-002) with a written reason.
+            </Banner>
+            <div className={L.row} style={{ marginTop: 6 }}>
+              <input
+                aria-label="Override reason"
+                placeholder="Reason for validation exception…"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                style={{ minWidth: 260 }}
+              />
+              <Button
+                small
+                variant="danger"
+                disabled={!overrideReason.trim()}
+                loading={overrideValidation.isPending}
+                onClick={() => overrideValidation.mutate()}
+              >
+                Override validation
+              </Button>
+            </div>
+            {overrideValidation.isError && (
+              <ErrorBanner error={overrideValidation.error} />
+            )}
+          </div>
+        )}
         {artifact.approvalStatus !== 'approved' && (
           <Banner kind="warn">
             Execution is gated on approval (FR-AUT-010). Approve this file to enable Run.
           </Banner>
         )}
+      </Card>
+
+      <Card
+        title="Run Execution (§23.3)"
+        subtitle="Approved + validated scripts run with live step streaming"
+      >
+        <RunLauncher
+          projectId={projectId}
+          automationIds={[artifact.id]}
+          disabled={!runnable}
+          disabledReason="Automation must be approved and validated before execution (FR-AUT-010)."
+        />
       </Card>
 
       <Card noPad>
@@ -202,6 +248,7 @@ export function AutomationPage(): JSX.Element {
   const qc = useQueryClient();
   useProjectEvents(projectId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const listQuery = useQuery({
     queryKey: qk.automation(projectId),
@@ -223,7 +270,10 @@ export function AutomationPage(): JSX.Element {
   const approvedIds = (approvedCasesQuery.data?.items ?? []).map((c) => c.id);
   const generate = useMutation({
     mutationFn: () => automationApi.generate(projectId, approvedIds),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.jobs(projectId) }),
+    onSuccess: (data) => {
+      setActiveJobId(data.jobId);
+      void qc.invalidateQueries({ queryKey: qk.jobs(projectId) });
+    },
   });
 
   return (
@@ -245,7 +295,14 @@ export function AutomationPage(): JSX.Element {
       />
 
       {generate.isError && <ErrorBanner error={generate.error} />}
-      {generate.isSuccess && <Banner kind="info">Generation queued ({generate.data.status}).</Banner>}
+      {activeJobId && (
+        <LiveJobConsole
+          projectId={projectId}
+          jobId={activeJobId}
+          title="Generating Playwright automation"
+          onFinished={() => void qc.invalidateQueries({ queryKey: qk.automation(projectId) })}
+        />
+      )}
 
       <QueryState query={listQuery} loadingLabel="Loading automation…">
         {(artifacts) =>

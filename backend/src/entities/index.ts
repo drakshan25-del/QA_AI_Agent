@@ -6,6 +6,7 @@ import { DocumentSegment } from './document-segment.entity';
 import { Requirement } from './requirement.entity';
 import { Analysis } from './analysis.entity';
 import { TestPlan } from './test-plan.entity';
+import { TestPlanRevision } from './test-plan-revision.entity';
 import { TestCase } from './test-case.entity';
 import { GeneratedArtifact } from './generated-artifact.entity';
 import { GenerationRun } from './generation-run.entity';
@@ -16,6 +17,9 @@ import { Approval } from './approval.entity';
 import { AuditEvent } from './audit-event.entity';
 import { ExecutionEvent } from './execution-event.entity';
 import { Job } from './job.entity';
+import { JobLogEntry } from './job-log-entry.entity';
+import { Notification } from './notification.entity';
+import { ProjectSequence } from './project-sequence.entity';
 import { EventSubscription } from './event-subscription.entity';
 
 export const ALL_ENTITIES = [
@@ -27,6 +31,7 @@ export const ALL_ENTITIES = [
   Requirement,
   Analysis,
   TestPlan,
+  TestPlanRevision,
   TestCase,
   GeneratedArtifact,
   GenerationRun,
@@ -37,6 +42,9 @@ export const ALL_ENTITIES = [
   AuditEvent,
   ExecutionEvent,
   Job,
+  JobLogEntry,
+  Notification,
+  ProjectSequence,
   EventSubscription,
 ];
 
@@ -49,6 +57,7 @@ export {
   Requirement,
   Analysis,
   TestPlan,
+  TestPlanRevision,
   TestCase,
   GeneratedArtifact,
   GenerationRun,
@@ -59,5 +68,8 @@ export {
   AuditEvent,
   ExecutionEvent,
   Job,
+  JobLogEntry,
+  Notification,
+  ProjectSequence,
   EventSubscription,
 };

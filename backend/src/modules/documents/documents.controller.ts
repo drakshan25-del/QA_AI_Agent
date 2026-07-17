@@ -27,6 +27,7 @@ import {
 } from '../../common/enums';
 import { ValidationFailedException } from '../../common/errors';
 import { UploadedFileLike } from './file-validation';
+import { RequirePermission } from '../../common/access/permissions';
 
 const MAX_FILES = 20;
 
@@ -37,6 +38,7 @@ export class DocumentsController {
   constructor(private readonly documents: DocumentsService) {}
 
   @Post('projects/:projectId/documents')
+  @RequirePermission('document.upload')
   @UseGuards(ProjectMemberGuard)
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(
@@ -95,6 +97,7 @@ export class DocumentsController {
   }
 
   @Delete('documents/:id')
+  @RequirePermission('document.upload')
   @HttpCode(204)
   async remove(
     @Param('id') id: string,

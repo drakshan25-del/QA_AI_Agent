@@ -23,11 +23,32 @@ export interface AppConfig {
   engine: {
     url: string;
     token: string;
+    timeoutMs: number;
   };
   ollamaBaseUrl: string;
   githubToken: string;
   uploadDir: string;
   maxUploadBytes: number;
+  jobs: {
+    /** Hard job timeout → status `timed_out` (§23.7, FR-V3-LOG). */
+    timeoutMs: number;
+  };
+  execution: {
+    /** Max concurrent local execution runs (FR-V3-EXE-012). */
+    maxConcurrent: number;
+    /** Admin-defined limits for run settings (FR-V3-EXE-011). */
+    maxTimeoutSeconds: number;
+    maxRetries: number;
+    maxWorkers: number;
+    maxSlowMoMs: number;
+  };
+  retention: {
+    /** Days to keep job logs / execution events / evidence; 0 = keep (FR-V3-ENT-011). */
+    jobLogDays: number;
+    executionEventDays: number;
+    evidenceDays: number;
+    sweepIntervalMinutes: number;
+  };
 }
 
 export default (): AppConfig => ({
@@ -54,9 +75,34 @@ export default (): AppConfig => ({
   engine: {
     url: process.env.ENGINE_URL || 'http://localhost:8100',
     token: process.env.ENGINE_TOKEN || '',
+    // Local LLM generation (test cases for a document-derived requirement)
+    // routinely needs several minutes; 120s cut real jobs off mid-flight.
+    timeoutMs: parseInt(process.env.ENGINE_TIMEOUT_MS || '600000', 10),
   },
   ollamaBaseUrl: process.env.QA_OLLAMA_BASE_URL || 'http://localhost:11434',
   githubToken: process.env.GITHUB_TOKEN || '',
   uploadDir: process.env.UPLOAD_DIR || './evidence',
   maxUploadBytes: parseInt(process.env.MAX_UPLOAD_BYTES || '26214400', 10),
+  jobs: {
+    timeoutMs: parseInt(process.env.JOB_TIMEOUT_MS || '1800000', 10),
+  },
+  execution: {
+    maxConcurrent: parseInt(process.env.EXEC_MAX_CONCURRENT || '1', 10),
+    maxTimeoutSeconds: parseInt(process.env.EXEC_MAX_TIMEOUT_SECONDS || '1800', 10),
+    maxRetries: parseInt(process.env.EXEC_MAX_RETRIES || '3', 10),
+    maxWorkers: parseInt(process.env.EXEC_MAX_WORKERS || '4', 10),
+    maxSlowMoMs: parseInt(process.env.EXEC_MAX_SLOWMO_MS || '2000', 10),
+  },
+  retention: {
+    jobLogDays: parseInt(process.env.RETENTION_JOB_LOG_DAYS || '0', 10),
+    executionEventDays: parseInt(
+      process.env.RETENTION_EXECUTION_EVENT_DAYS || '0',
+      10,
+    ),
+    evidenceDays: parseInt(process.env.RETENTION_EVIDENCE_DAYS || '0', 10),
+    sweepIntervalMinutes: parseInt(
+      process.env.RETENTION_SWEEP_INTERVAL_MINUTES || '720',
+      10,
+    ),
+  },
 });

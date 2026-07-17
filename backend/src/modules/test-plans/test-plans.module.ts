@@ -6,7 +6,9 @@ import {
   Project,
   Requirement,
   TestPlan,
+  TestPlanRevision,
 } from '../../entities';
+import { RequirementsModule } from '../requirements/requirements.module';
 import { TestPlansService } from './test-plans.service';
 import { TestPlansController } from './test-plans.controller';
 
@@ -14,11 +16,13 @@ import { TestPlansController } from './test-plans.controller';
   imports: [
     TypeOrmModule.forFeature([
       TestPlan,
+      TestPlanRevision,
       Requirement,
       Analysis,
       GenerationRun,
       Project,
     ]),
+    RequirementsModule,
   ],
   controllers: [TestPlansController],
   providers: [TestPlansService],

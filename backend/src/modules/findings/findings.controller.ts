@@ -7,6 +7,7 @@ import {
   CorrelationId,
   CurrentUser,
 } from '../../common/decorators';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('findings')
 @ApiBearerAuth()
@@ -25,6 +26,7 @@ export class FindingsController {
   }
 
   @Post('findings/:id/override')
+  @RequirePermission('classification.override')
   async override(
     @Param('id') id: string,
     @Body() dto: OverrideFindingDto,

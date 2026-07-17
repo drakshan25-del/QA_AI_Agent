@@ -1,6 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   Analysis,
   GenerationRun,
@@ -12,11 +12,14 @@ import { AuthUser } from '../../common/decorators';
 import { NotFoundAppException } from '../../common/errors';
 import { contentHash } from '../../common/hash';
 import { ApprovalDecision } from '../../common/enums';
+import { deriveArtefactState } from '../../common/state-machines';
 import { AuditService } from '../audit/audit.service';
 import { EventsService } from '../events/events.service';
 import { JobsService } from '../jobs/jobs.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
+import { SequencesService } from '../sequences/sequences.service';
 import { EngineClient } from '../../engine/engine.client';
 import { GenerateTestCasesDto, UpdateTestCaseDto } from './dto/test-case.dto';
 
@@ -31,8 +34,16 @@ export interface TestCaseFilter {
   pageSize?: number;
 }
 
+/** Render TC-{int}, optionally zero-padded per project setting (FR-V3-TC-001/004). */
+export function formatTestCaseId(seq: number, zeroPad = 0): string {
+  const n = zeroPad > 0 ? String(seq).padStart(zeroPad, '0') : String(seq);
+  return `TC-${n}`;
+}
+
 @Injectable()
-export class TestCasesService {
+export class TestCasesService implements OnModuleInit {
+  private readonly logger = new Logger(TestCasesService.name);
+
   constructor(
     @InjectRepository(TestCase) private readonly cases: Repository<TestCase>,
     @InjectRepository(Requirement)
@@ -46,8 +57,58 @@ export class TestCasesService {
     private readonly events: EventsService,
     private readonly jobs: JobsService,
     private readonly approvals: ApprovalsService,
+    private readonly derivation: RequirementDerivationService,
+    private readonly sequences: SequencesService,
     private readonly engine: EngineClient,
-  ) {}
+  ) {
+    this.jobs.registerRetryHandler('test_cases', (original, user, correlationId) =>
+      this.generate(
+        original.projectId,
+        {
+          requirementIds:
+            (original.inputRefs?.requirementIds as string[]) ?? undefined,
+          minCases: (original.inputRefs?.minCases as number) ?? undefined,
+        },
+        user,
+        correlationId,
+      ),
+    );
+  }
+
+  /**
+   * Backfill TC-{int} identifiers for rows created before V3 (FR-V3-TC-001),
+   * in creation order, then raise the sequence above the maximum so new
+   * generations never collide.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const legacy = await this.cases.find({
+        where: { seq: 0 },
+        order: { createdAt: 'ASC' },
+      });
+      if (!legacy.length) return;
+      const byProject = new Map<string, TestCase[]>();
+      for (const tc of legacy) {
+        const list = byProject.get(tc.projectId) ?? [];
+        list.push(tc);
+        byProject.set(tc.projectId, list);
+      }
+      for (const [projectId, list] of byProject) {
+        const project = await this.projects.findOne({ where: { id: projectId } });
+        const start = await this.sequences.next(projectId, 'test_case', list.length);
+        list.forEach((tc, i) => {
+          tc.seq = start + i;
+          tc.humanId = formatTestCaseId(tc.seq, project?.tcZeroPad ?? 0);
+        });
+        await this.cases.save(list);
+        this.logger.log(
+          `Backfilled ${list.length} test-case IDs for project ${projectId}`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`test-case ID backfill skipped: ${(err as Error).message}`);
+    }
+  }
 
   async generate(
     projectId: string,
@@ -60,11 +121,19 @@ export class TestCasesService {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundAppException(`Project ${projectId} not found`);
 
-    const requirements = await this.requirements.find({
-      where: { projectId, id: In(dto.requirementIds) },
-    });
+    // Cover uploaded documents too: derive requirements from their segments
+    // and add them to the explicitly requested set (FR-IN-008).
+    const requirements = await this.derivation.resolveGenerationScope(
+      projectId,
+      dto.requirementIds,
+      undefined,
+      user,
+      correlationId,
+    );
     if (!requirements.length) {
-      throw new NotFoundAppException('No matching requirements found');
+      throw new NotFoundAppException(
+        'No matching requirements found. Add requirements or upload documents first.',
+      );
     }
 
     const job = await this.jobs.create({
@@ -72,7 +141,10 @@ export class TestCasesService {
       type: 'test_cases',
       correlationId,
       idempotencyKey,
-      inputRefs: { requirementIds: dto.requirementIds, minCases: dto.minCases },
+      inputRefs: {
+        requirementIds: requirements.map((r) => r.id),
+        minCases: dto.minCases,
+      },
       createdBy: user.id,
     });
 
@@ -86,7 +158,7 @@ export class TestCasesService {
       correlationId,
     });
 
-    this.jobs.dispatch(job, async () => {
+    this.jobs.dispatch(job, async (j, ctx) => {
       const run = await this.runs.save(
         this.runs.create({
           projectId,
@@ -98,8 +170,24 @@ export class TestCasesService {
         }),
       );
 
+      await ctx.log({
+        stage: 'scenario discovery',
+        message: `Generating test cases for ${requirements.length} requirement(s) with ${project.llmModel || 'the default model'}`,
+        progress: 8,
+      });
+
       const caseIds: string[] = [];
+      let index = 0;
       for (const req of requirements) {
+        await ctx.checkpoint();
+        index += 1;
+        const progressBase = 8 + Math.round((index - 1) / requirements.length * 80);
+        await ctx.log({
+          stage: 'scenario discovery',
+          message: `Requirement ${index}/${requirements.length}: "${req.title || req.id}" — discovering positive, negative and boundary scenarios`,
+          progress: progressBase,
+        });
+
         const analysis = await this.analyses.findOne({
           where: { projectId, requirementId: req.id },
           order: { createdAt: 'DESC' },
@@ -122,13 +210,29 @@ export class TestCasesService {
         );
 
         const list = (output.test_cases as Record<string, unknown>[]) || [];
+        await ctx.log({
+          stage: 'numbering',
+          message: `Requirement ${index}/${requirements.length}: assigning ${list.length} TC identifiers from the project sequence`,
+          progress: progressBase + Math.round(80 / requirements.length / 2),
+        });
+
+        // Concurrency-safe block reservation (FR-V3-TC-001/003).
+        const firstSeq = list.length
+          ? await this.sequences.next(projectId, 'test_case', list.length)
+          : 0;
+
+        let offset = 0;
         for (const tc of list) {
+          const seq = firstSeq + offset;
+          offset += 1;
           const saved = await this.cases.save(
             this.cases.create({
               projectId,
               generationRunId: run.id,
               requirementIds: ((tc.requirement_ids as string[]) || [req.id]),
               caseKey: (tc.case_key as string) || '',
+              seq,
+              humanId: formatTestCaseId(seq, project.tcZeroPad),
               title: (tc.title as string) || 'Untitled',
               objective: (tc.objective as string) || '',
               category: (tc.category as string) || 'positive',
@@ -149,6 +253,12 @@ export class TestCasesService {
           );
           caseIds.push(saved.id);
         }
+        await ctx.log({
+          stage: 'persistence',
+          severity: 'success',
+          message: `Requirement ${index}/${requirements.length}: saved ${list.length} case(s) (${list.length ? `${formatTestCaseId(firstSeq, project.tcZeroPad)}…${formatTestCaseId(firstSeq + list.length - 1, project.tcZeroPad)}` : 'none'})`,
+          progress: 8 + Math.round(index / requirements.length * 80),
+        });
       }
 
       this.events.emit({
@@ -194,22 +304,30 @@ export class TestCasesService {
         automation: filter.automation,
       });
     if (filter.q)
-      qb.andWhere('(t.title LIKE :q OR t.objective LIKE :q)', {
+      qb.andWhere('(t.title LIKE :q OR t.objective LIKE :q OR t.human_id LIKE :q)', {
         q: `%${filter.q}%`,
       });
 
-    qb.orderBy('t.created_at', 'DESC')
+    qb.orderBy('t.seq', 'ASC')
+      .addOrderBy('t.created_at', 'DESC')
       .skip((page - 1) * pageSize)
       .take(pageSize);
     const [items, total] = await qb.getManyAndCount();
-    return { items, total, page, pageSize };
+    return {
+      items: items.map((c) =>
+        Object.assign(c, { artefactState: deriveArtefactState(c) }),
+      ),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async getOne(id: string, user: AuthUser): Promise<TestCase> {
     const tc = await this.cases.findOne({ where: { id } });
     if (!tc) throw new NotFoundAppException(`Test case ${id} not found`);
     await this.membership.ensureMember(tc.projectId, user);
-    return tc;
+    return Object.assign(tc, { artefactState: deriveArtefactState(tc) });
   }
 
   async update(
@@ -219,6 +337,7 @@ export class TestCasesService {
     correlationId?: string,
   ): Promise<TestCase> {
     const tc = await this.getOne(id, user);
+    // FR-V3-TC-002: editing never reassigns seq/humanId — identity is stable.
     Object.assign(tc, {
       ...(dto.title !== undefined ? { title: dto.title } : {}),
       ...(dto.objective !== undefined ? { objective: dto.objective } : {}),
@@ -256,7 +375,7 @@ export class TestCasesService {
       resourceId: id,
       projectId: tc.projectId,
       correlationId,
-      metadata: { version: tc.version },
+      metadata: { version: tc.version, humanId: tc.humanId },
     });
     return this.getOne(id, user);
   }

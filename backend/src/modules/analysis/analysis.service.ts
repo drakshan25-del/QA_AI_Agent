@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Analysis, GenerationRun, Project, Requirement } from '../../entities';
 import { AuthUser } from '../../common/decorators';
 import {
@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { EventsService } from '../events/events.service';
 import { JobsService } from '../jobs/jobs.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
 import { EngineClient } from '../../engine/engine.client';
 import { CreateAnalysisJobDto } from './dto/analysis.dto';
 
@@ -28,8 +29,23 @@ export class AnalysisService {
     private readonly audit: AuditService,
     private readonly events: EventsService,
     private readonly jobs: JobsService,
+    private readonly derivation: RequirementDerivationService,
     private readonly engine: EngineClient,
-  ) {}
+  ) {
+    this.jobs.registerRetryHandler('analysis', (original, user, correlationId) =>
+      this.createJob(
+        original.projectId,
+        {
+          requirementIds:
+            (original.inputRefs?.requirementIds as string[]) ?? undefined,
+          documentIds:
+            (original.inputRefs?.documentIds as string[]) ?? undefined,
+        },
+        user,
+        correlationId,
+      ),
+    );
+  }
 
   async createJob(
     projectId: string,
@@ -42,13 +58,18 @@ export class AnalysisService {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundAppException(`Project ${projectId} not found`);
 
-    const where = dto.requirementIds?.length
-      ? { projectId, id: In(dto.requirementIds) }
-      : { projectId };
-    const requirements = await this.requirements.find({ where });
+    // Documents count as input too: derive requirements from their included
+    // segments so analysis covers uploads, not only manual entries (FR-IN-008).
+    const requirements = await this.derivation.resolveGenerationScope(
+      projectId,
+      dto.requirementIds,
+      dto.documentIds,
+      user,
+      correlationId,
+    );
     if (!requirements.length) {
       throw new ValidationFailedException(
-        'No requirements to analyse. Create requirements (or pass requirementIds) first.',
+        'No requirements to analyse. Add requirements or upload documents first.',
       );
     }
 
@@ -75,7 +96,7 @@ export class AnalysisService {
       metadata: { requirements: requirements.length },
     });
 
-    this.jobs.dispatch(job, async () => {
+    this.jobs.dispatch(job, async (j, ctx) => {
       const run = await this.runs.save(
         this.runs.create({
           projectId,
@@ -88,8 +109,22 @@ export class AnalysisService {
         }),
       );
 
+      await ctx.log({
+        stage: 'document parsing',
+        message: `Analysing ${requirements.length} requirement(s) with ${project.llmModel || 'the default model'}`,
+        progress: 8,
+      });
+
       const analysisIds: string[] = [];
+      let index = 0;
       for (const req of requirements) {
+        await ctx.checkpoint();
+        index += 1;
+        await ctx.log({
+          stage: 'requirement analysis',
+          message: `Requirement ${index}/${requirements.length}: "${req.title || req.id}" — extracting actors, flows, rules, risks and gaps`,
+          progress: 8 + Math.round(((index - 1) / requirements.length) * 84),
+        });
         const output = await this.engine.analyse(
           {
             requirementId: req.id,
@@ -117,6 +152,12 @@ export class AnalysisService {
           }),
         );
         analysisIds.push(saved.id);
+        await ctx.log({
+          stage: 'requirement analysis',
+          severity: 'success',
+          message: `Requirement ${index}/${requirements.length}: analysis stored (risk score ${saved.riskScore}/10)`,
+          progress: 8 + Math.round((index / requirements.length) * 84),
+        });
 
         this.events.emit({
           type: 'analysis.ready',

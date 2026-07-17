@@ -17,6 +17,7 @@ import {
   CurrentUser,
 } from '../../common/decorators';
 import { ProjectMemberGuard } from '../../common/access/project-member.guard';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('analysis')
 @ApiBearerAuth()
@@ -25,6 +26,7 @@ export class AnalysisController {
   constructor(private readonly analysis: AnalysisService) {}
 
   @Post('projects/:projectId/analysis-jobs')
+  @RequirePermission('generation.run')
   @HttpCode(202)
   @UseGuards(ProjectMemberGuard)
   async create(

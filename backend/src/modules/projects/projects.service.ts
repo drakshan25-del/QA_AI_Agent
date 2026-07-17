@@ -10,8 +10,9 @@ import {
 } from 'typeorm';
 import {
   Analysis,
-  Approval,
+  AuditEvent,
   ExecutionRun,
+  Finding,
   GeneratedArtifact,
   Project,
   ProjectMember,
@@ -54,6 +55,7 @@ export class ProjectsService {
       llmModel: dto.llmModel ?? '',
       llmTemperature: dto.llmTemperature ?? 0.1,
       runner: dto.runner ?? 'pytest',
+      tcZeroPad: dto.tcZeroPad ?? 0,
       createdBy: user.id,
     });
     const saved = await this.projects.save(project);
@@ -135,7 +137,7 @@ export class ProjectsService {
       count(TestCase, { approvalStatus: 'approved' }),
       count(GeneratedArtifact),
       count(ExecutionRun),
-      count(Approval, { decision: 'regenerate' }),
+      this.pendingApprovalsCount(projectId),
     ]);
 
     return {
@@ -150,6 +152,121 @@ export class ProjectsService {
       executions,
       pendingApprovals,
     };
+  }
+
+  private async pendingApprovalsCount(projectId: string): Promise<number> {
+    const count = (
+      entity: EntityTarget<ObjectLiteral>,
+      where: Record<string, unknown> = {},
+    ) =>
+      this.dataSource.getRepository(entity).count({
+        where: { projectId, ...where } as FindOptionsWhere<ObjectLiteral>,
+      });
+    const [plans, cases, artifacts] = await Promise.all([
+      count(TestPlan, { approvalStatus: 'pending' }),
+      count(TestCase, { approvalStatus: 'pending' }),
+      count(GeneratedArtifact, { approvalStatus: 'pending', status: 'active' }),
+    ]);
+    return plans + cases + artifacts;
+  }
+
+  /**
+   * Project dashboard (FR-V3-ENT-003): workflow status, pending approvals,
+   * recent runs, pass rate, defect count and recent activity — scoped by
+   * membership and linking back to source records.
+   */
+  async dashboard(id: string, user: AuthUser): Promise<Record<string, unknown>> {
+    await this.findOne(id, user);
+    const summary = await this.workflowSummary(id);
+
+    const runs = await this.dataSource.getRepository(ExecutionRun).find({
+      where: { projectId: id },
+      order: { createdAt: 'DESC' },
+      take: 10,
+    });
+    const results = await this.dataSource
+      .getRepository(TestResult)
+      .createQueryBuilder('r')
+      .innerJoin(ExecutionRun, 'e', 'e.id = r.execution_run_id')
+      .where('e.project_id = :id', { id })
+      .getMany();
+    const passed = results.filter((r) => r.outcome === 'passed').length;
+    const failed = results.filter((r) => r.outcome === 'failed').length;
+
+    const findings = await this.dataSource
+      .getRepository(Finding)
+      .count({ where: { projectId: id } });
+
+    const recentActivity = await this.dataSource.getRepository(AuditEvent).find({
+      where: { projectId: id },
+      order: { createdAt: 'DESC' },
+      take: 20,
+    });
+
+    const pendingApprovalItems = await this.pendingApprovalItems(id);
+
+    return {
+      workflowSummary: summary,
+      pendingApprovals: pendingApprovalItems,
+      recentRuns: runs.map((r) => ({
+        id: r.id,
+        status: r.status,
+        browser: r.browser,
+        headed: r.headed,
+        mode: r.mode,
+        runScope: r.runScope,
+        startedAt: r.startedAt,
+        finishedAt: r.finishedAt,
+        metrics: r.metrics,
+      })),
+      passRate: {
+        total: results.length,
+        passed,
+        failed,
+        percent: results.length
+          ? Math.round((passed / results.length) * 100)
+          : 0,
+      },
+      defects: findings,
+      recentActivity,
+    };
+  }
+
+  private async pendingApprovalItems(
+    projectId: string,
+  ): Promise<Record<string, unknown>[]> {
+    const where = {
+      projectId,
+      approvalStatus: 'pending',
+    } as FindOptionsWhere<ObjectLiteral>;
+    const [plans, cases, artifacts] = await Promise.all([
+      this.dataSource.getRepository(TestPlan).find({ where, take: 10 }),
+      this.dataSource.getRepository(TestCase).find({ where, take: 10 }),
+      this.dataSource.getRepository(GeneratedArtifact).find({
+        where: { ...where, status: 'active' } as FindOptionsWhere<ObjectLiteral>,
+        take: 10,
+      }),
+    ]);
+    return [
+      ...plans.map((p) => ({
+        resourceType: 'test_plan',
+        resourceId: p.id,
+        title: p.title,
+        version: p.version,
+      })),
+      ...cases.map((c) => ({
+        resourceType: 'test_case',
+        resourceId: c.id,
+        title: `${c.humanId ? `${c.humanId} - ` : ''}${c.title}`,
+        version: c.version,
+      })),
+      ...artifacts.map((a) => ({
+        resourceType: 'automation',
+        resourceId: a.id,
+        title: a.path,
+        version: a.version,
+      })),
+    ];
   }
 
   async update(
@@ -174,6 +291,7 @@ export class ProjectsService {
         ? { llmTemperature: dto.llmTemperature }
         : {}),
       ...(dto.runner !== undefined ? { runner: dto.runner } : {}),
+      ...(dto.tcZeroPad !== undefined ? { tcZeroPad: dto.tcZeroPad } : {}),
     });
     const saved = await this.projects.save(project);
     await this.audit.record({

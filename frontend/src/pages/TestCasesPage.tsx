@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
+import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
-import { Banner, ErrorBanner } from '../components/ui/Banner';
+import { ErrorBanner } from '../components/ui/Banner';
 import { Progress } from '../components/ui/Progress';
 import { TestCaseEditModal } from '../features/test-cases/TestCaseEditModal';
 import { useProjectId } from '../features/projects/hooks';
@@ -73,6 +74,7 @@ export function TestCasesPage(): JSX.Element {
   const [filter, setFilter] = useState<TestCaseFilter>(emptyFilter);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<TestCase | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const setF = (patch: Partial<TestCaseFilter>) =>
     setFilter((prev) => ({ ...prev, ...patch, page: patch.page ?? 1 }));
@@ -97,7 +99,10 @@ export function TestCasesPage(): JSX.Element {
   const generate = useMutation({
     mutationFn: () =>
       testCasesApi.generate(projectId, (requirementsQuery.data ?? []).map((r) => r.id)),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.jobs(projectId) }),
+    onSuccess: (data) => {
+      setActiveJobId(data.jobId);
+      void qc.invalidateQueries({ queryKey: qk.jobs(projectId) });
+    },
   });
   const bulkApprove = useMutation({
     mutationFn: (input: { ids: string[]; decision: ApprovalDecision }) =>
@@ -144,7 +149,14 @@ export function TestCasesPage(): JSX.Element {
       />
 
       {generate.isError && <ErrorBanner error={generate.error} />}
-      {generate.isSuccess && <Banner kind="info">Generation queued ({generate.data.status}).</Banner>}
+      {activeJobId && (
+        <LiveJobConsole
+          projectId={projectId}
+          jobId={activeJobId}
+          title="Generating test cases"
+          onFinished={invalidate}
+        />
+      )}
 
       <CoveragePanel projectId={projectId} />
 
@@ -311,7 +323,10 @@ export function TestCasesPage(): JSX.Element {
                           />
                         </td>
                         <td>
-                          <div style={{ fontWeight: 600 }}>{tc.title}</div>
+                          <div style={{ fontWeight: 600 }}>
+                            {tc.humanId ? `${tc.humanId} - ` : ''}
+                            {tc.title}
+                          </div>
                           <div className={L.muted} style={{ fontSize: 12 }}>
                             {tc.caseKey}
                             {tc.objective ? ` · ${tc.objective.slice(0, 60)}` : ''}

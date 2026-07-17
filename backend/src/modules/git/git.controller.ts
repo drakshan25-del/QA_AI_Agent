@@ -10,6 +10,7 @@ import {
 } from '../../common/decorators';
 import { ProjectMemberGuard } from '../../common/access/project-member.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('git')
 @ApiBearerAuth()
@@ -18,6 +19,7 @@ export class GitController {
   constructor(private readonly git: GitService) {}
 
   @Post('projects/:projectId/git/commit')
+  @RequirePermission('git.push')
   @UseGuards(ProjectMemberGuard, RolesGuard)
   @Roles('automation_engineer', 'devops', 'supervisor', 'admin')
   async commit(

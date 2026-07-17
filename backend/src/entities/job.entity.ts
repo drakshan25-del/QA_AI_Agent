@@ -44,6 +44,18 @@ export class Job {
   @Column({ type: 'text', default: '' })
   error!: string;
 
+  /** Set by POST /jobs/{id}/cancel; workers stop at the next checkpoint (FR-V3-LOG-009). */
+  @Column({ type: 'boolean', name: 'cancel_requested', default: false })
+  cancelRequested!: boolean;
+
+  /** When this job is a retry, the job it retries (FR-V3-LOG-009 traceability). */
+  @Column({ type: 'varchar', name: 'retry_of_job_id', nullable: true })
+  retryOfJobId!: string | null;
+
+  /** Current stage label mirrored from the latest log entry (§23.1.1). */
+  @Column({ type: 'varchar', name: 'current_stage', default: '' })
+  currentStage!: string;
+
   @Column({ type: DATETIME_TYPE, name: 'started_at', nullable: true })
   startedAt!: Date | null;
 

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
@@ -7,7 +7,8 @@ import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useProjectId } from '../features/projects/hooks';
-import { projectsApi } from '../services/api/endpoints';
+import { ciApi, projectsApi } from '../services/api/endpoints';
+import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { qk } from '../services/api/queryKeys';
 import type { ExecutionRun } from '../services/api/types';
 import { formatRelative } from '../lib/format';
@@ -61,6 +62,98 @@ function MetricTiles({ projectId }: { projectId: string }): JSX.Element {
   );
 }
 
+/** CI/CD status panel (FR-V3-CI-001/002): dispatch + run history with §23.7 states. */
+function CiPanel({ projectId }: { projectId: string }): JSX.Element {
+  const qc = useQueryClient();
+  const runsQuery = useQuery({
+    queryKey: ['ci', projectId, 'runs'],
+    queryFn: () => ciApi.listRuns(projectId),
+    enabled: !!projectId,
+  });
+  const dispatch = useMutation({
+    mutationFn: () => ciApi.dispatch(projectId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ci', projectId] }),
+  });
+
+  return (
+    <Card
+      title="CI/CD (GitHub Actions)"
+      subtitle="Trigger approved workflows and track their state (FR-V3-CI-*)"
+      actions={
+        <Button
+          small
+          variant="primary"
+          loading={dispatch.isPending}
+          onClick={() => dispatch.mutate()}
+        >
+          Dispatch workflow
+        </Button>
+      }
+    >
+      {dispatch.isError && <ErrorBanner error={dispatch.error} />}
+      {dispatch.isSuccess && (
+        <Banner kind={dispatch.data.mode === 'dispatched' ? 'success' : 'warn'}>
+          CI run {dispatch.data.ciRunId.slice(0, 8)} created ({dispatch.data.mode}
+          {dispatch.data.mode !== 'dispatched'
+            ? ' — configure GITHUB_TOKEN and a repository for a real dispatch'
+            : ''}
+          ).
+          {dispatch.data.ciUrl && (
+            <>
+              {' '}
+              <a href={dispatch.data.ciUrl} target="_blank" rel="noreferrer">
+                Open on GitHub
+              </a>
+            </>
+          )}
+        </Banner>
+      )}
+      <QueryState query={runsQuery} loadingLabel="Loading CI runs…">
+        {(runs) =>
+          runs.length === 0 ? (
+            <p className={L.muted}>No CI runs yet.</p>
+          ) : (
+            <div className={ui.tableWrap}>
+              <table className={ui.table}>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>State</th>
+                    <th>Started</th>
+                    <th>Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id}>
+                      <td className={L.mono}>{r.id.slice(0, 8)}</td>
+                      <td>
+                        <StatusBadge
+                          status={String((r as unknown as { ciStatus?: string }).ciStatus ?? r.status)}
+                        />
+                      </td>
+                      <td className={L.muted}>{formatRelative(r.startedAt ?? r.createdAt)}</td>
+                      <td>
+                        {r.ciUrl ? (
+                          <a href={r.ciUrl} target="_blank" rel="noreferrer">
+                            GitHub
+                          </a>
+                        ) : (
+                          <span className={L.muted}>—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </QueryState>
+    </Card>
+  );
+}
+
 export function ProjectReportsPage(): JSX.Element {
   const projectId = useProjectId();
   const exportQuery = useQuery({
@@ -71,8 +164,9 @@ export function ProjectReportsPage(): JSX.Element {
 
   return (
     <div className={L.stack}>
-      <PageHeader title="Reports" subtitle="Executions and aggregate metrics (FR-REP-*, §15.2)" />
+      <PageHeader title="Reports" subtitle="Executions, CI/CD and aggregate metrics (FR-REP-*, §15.2)" />
       <MetricTiles projectId={projectId} />
+      <CiPanel projectId={projectId} />
 
       <Card title="Executions">
         <QueryState query={exportQuery} loadingLabel="Loading executions…">
@@ -95,6 +189,7 @@ export function ProjectReportsPage(): JSX.Element {
                       <th>Run</th>
                       <th>Status</th>
                       <th>Environment</th>
+                      <th>Results</th>
                       <th>Started</th>
                       <th>Actions</th>
                     </tr>
@@ -108,6 +203,17 @@ export function ProjectReportsPage(): JSX.Element {
                         </td>
                         <td>
                           {e.browser} · {e.environment}
+                          {e.headed ? ' · headed' : ''}
+                        </td>
+                        <td className={L.muted}>
+                          {(() => {
+                            const m = (e.metrics ?? {}) as Record<string, number>;
+                            const p = m.passed ?? 0;
+                            const f = m.failed ?? 0;
+                            return p + f > 0
+                              ? `${p}/${p + f} passed (${Math.round((p / (p + f)) * 100)}%)`
+                              : '—';
+                          })()}
                         </td>
                         <td className={L.muted}>{formatRelative(e.startedAt ?? e.createdAt)}</td>
                         <td>

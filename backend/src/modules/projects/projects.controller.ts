@@ -64,6 +64,12 @@ export class ProjectsController {
     return this.projects.metrics(id, user);
   }
 
+  /** Project dashboard (FR-V3-ENT-003). */
+  @Get(':id/dashboard')
+  async dashboard(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.projects.dashboard(id, user);
+  }
+
   @Get(':id/export')
   async export(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.projects.exportProject(id, user);

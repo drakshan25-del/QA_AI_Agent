@@ -7,20 +7,26 @@
 // ---- Enums (V2_CONTRACT §1, §5) --------------------------------------------
 
 export type Role =
+  | 'admin'
+  | 'qa_lead'
   | 'qa_engineer'
   | 'automation_engineer'
   | 'developer'
+  | 'reviewer'
+  | 'viewer'
   | 'supervisor'
-  | 'devops'
-  | 'admin';
+  | 'devops';
 
 export const ROLES: Role[] = [
+  'admin',
+  'qa_lead',
   'qa_engineer',
   'automation_engineer',
   'developer',
+  'reviewer',
+  'viewer',
   'supervisor',
   'devops',
-  'admin',
 ];
 
 export type DocumentCategory =
@@ -41,31 +47,86 @@ export const DOCUMENT_CATEGORIES: DocumentCategory[] = [
 export type ProjectStatus = 'active' | 'archived';
 export type Runner = 'pytest' | 'playwright-test';
 
-export type JobType = 'analysis' | 'test_plan' | 'test_cases' | 'automation';
-export type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
+export type JobType =
+  | 'analysis'
+  | 'test_plan'
+  | 'test_cases'
+  | 'automation'
+  | 'validation'
+  | 'report';
+/** Generation-job state machine (V3 SRS §23.7). */
+export type JobStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'completed'
+  | 'completed_with_warnings'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out';
 
 export type ApprovalDecision = 'approved' | 'rejected' | 'regenerate';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export type ArtifactStatus = 'active' | 'superseded';
-export type ValidationStatus = 'pending' | 'passed' | 'failed';
+/** Validation state machine (V3 SRS §23.7). */
+export type ValidationStatus =
+  | 'not_started'
+  | 'pending'
+  | 'running'
+  | 'passed'
+  | 'passed_with_warnings'
+  | 'failed'
+  | 'overridden';
+/** Artefact lifecycle state (V3 SRS §23.7), derived server-side. */
+export type ArtefactState =
+  | 'draft'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'superseded'
+  | 'archived';
 
+/** Execution-run state machine (V3 SRS §23.7). */
 export type ExecutionStatus =
   | 'queued'
+  | 'preparing'
   | 'running'
+  | 'stopping'
+  | 'passed'
+  | 'failed'
+  | 'partially_passed'
+  | 'cancelled'
+  | 'timed_out'
   | 'completed'
-  | 'error'
-  | 'cancelled';
+  | 'error';
 export type ExecutionMode = 'local' | 'ci';
+export type BrowserEngine = 'chromium' | 'firefox' | 'webkit';
+export type RunScope = 'selected' | 'failed' | 'all';
+/** CI/CD run state machine (V3 SRS §23.7). */
+export type CiRunStatus =
+  | 'not_triggered'
+  | 'queued'
+  | 'in_progress'
+  | 'successful'
+  | 'failed'
+  | 'cancelled';
 
 export type FindingClassification =
   | 'app_defect'
   | 'test_defect'
   | 'environment'
   | 'data'
-  | 'inconclusive';
+  | 'flaky'
+  | 'inconclusive'
+  | 'unknown';
 
-export type ApprovalResourceType = 'test_plan' | 'test_case' | 'automation';
+export type ApprovalResourceType =
+  | 'test_plan'
+  | 'test_case'
+  | 'automation'
+  | 'validation_exception'
+  | 'report';
 
 /** Live status a UI element can present (FR-FE-003). */
 export type UiStatus =
@@ -84,8 +145,10 @@ export type UiStatus =
 
 export type EventType =
   | 'job.progress'
+  | 'job.log'
   | 'job.completed'
   | 'job.failed'
+  | 'job.cancelled'
   | 'analysis.ready'
   | 'plan.ready'
   | 'cases.ready'
@@ -94,6 +157,7 @@ export type EventType =
   | 'approval.updated'
   | 'execution.step'
   | 'execution.status'
+  | 'notification.new'
   | 'ci.status';
 
 export interface EventEnvelope<P = Record<string, unknown>> {
@@ -162,6 +226,8 @@ export interface Project {
   llmModel: string;
   llmTemperature: number;
   runner: Runner;
+  /** Zero-pad width for displayed TC IDs; 0 = TC-1 (FR-V3-TC-004). */
+  tcZeroPad: number;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -267,6 +333,7 @@ export interface TestPlan {
   generationRunId: string | null;
   title: string;
   version: number;
+  artefactState?: ArtefactState;
   approvalStatus: ApprovalStatus;
   approvalInvalidated: boolean;
   schemaVersion: string;
@@ -284,6 +351,11 @@ export interface TestCase {
   generationRunId: string | null;
   requirementIds: string[] | null;
   caseKey: string;
+  /** Canonical numeric ID value (FR-V3-TC-001); stable across edits. */
+  seq: number;
+  /** Human-readable identifier, e.g. TC-12 (FR-V3-TC-001). */
+  humanId: string;
+  artefactState?: ArtefactState;
   title: string;
   objective: string;
   category: string;
@@ -393,6 +465,11 @@ export interface ExecutionRun {
   headed: boolean;
   automationIds: string[] | null;
   testPaths: string[] | null;
+  /** selected | failed | all (FR-V3-EXE-007). */
+  runScope: RunScope | string;
+  /** Effective runtime settings persisted with the run (FR-V3-EXE-011). */
+  settings: ExecutionSettings | null;
+  restartOfRunId: string | null;
   metrics: Record<string, unknown> | null;
   evidence: Record<string, unknown> | null;
   ciRunId: string;
@@ -495,6 +572,9 @@ export interface Job {
   inputRefs: Record<string, unknown> | null;
   resultRefs: Record<string, unknown> | null;
   error: string;
+  cancelRequested: boolean;
+  retryOfJobId: string | null;
+  currentStage: string;
   startedAt: string | null;
   finishedAt: string | null;
   createdBy: string | null;
@@ -533,19 +613,150 @@ export interface CreateProjectInput {
   llmModel?: string;
   llmTemperature?: number;
   runner?: Runner;
+  tcZeroPad?: number;
 }
 
 export type UpdateProjectInput = Partial<
   CreateProjectInput & { status: ProjectStatus }
 >;
 
+export interface ExecutionSettings {
+  timeoutSeconds?: number;
+  retries?: number;
+  workers?: number;
+  slowMoMs?: number;
+  screenshotMode?: 'on-failure' | 'every-test' | 'off';
+  video?: boolean;
+}
+
 export interface CreateExecutionInput {
   projectId: string;
   automationIds?: string[];
   testPaths?: string[];
-  browser?: string;
+  browser?: BrowserEngine | string;
   headed?: boolean;
   environment?: string;
+  runScope?: RunScope;
+  settings?: ExecutionSettings;
+}
+
+// ---- V3 additions (§23.1/§23.2/§23.4/§23.5) ----------------------------
+
+export type LogSeverity = 'info' | 'success' | 'warning' | 'error';
+
+/** Persisted live-log entry for a job (FR-V3-LOG-001..008). */
+export interface JobLogEntry {
+  id: string;
+  jobId: string;
+  projectId: string;
+  seq: number;
+  stage: string;
+  message: string;
+  severity: LogSeverity;
+  progress: number | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** `job.log` WS payload. */
+export interface JobLogPayload {
+  jobId: string;
+  type: JobType;
+  seq: number;
+  stage: string;
+  message: string;
+  severity: LogSeverity;
+  progress: number | null;
+  meta?: Record<string, unknown>;
+  ts: string;
+}
+
+/** Test plan revision v{int} (FR-V3-TP-001/002). */
+export interface TestPlanRevision {
+  id: string;
+  testPlanId: string;
+  projectId: string;
+  version: number;
+  title: string;
+  sections: Record<string, unknown>;
+  contentHash: string;
+  sourceAction: string;
+  changeSummary: string;
+  approvalStatus: ApprovalStatus;
+  author: string;
+  authorId: string | null;
+  createdAt: string;
+}
+
+export interface RevisionSectionDiff {
+  section: string;
+  change: 'added' | 'removed' | 'changed' | 'unchanged';
+  from: unknown;
+  to: unknown;
+}
+
+export interface RevisionComparison {
+  from: TestPlanRevision;
+  to: TestPlanRevision;
+  sections: RevisionSectionDiff[];
+}
+
+export type NotificationType =
+  | 'job.completed'
+  | 'job.failed'
+  | 'approval.requested'
+  | 'execution.finished'
+  | 'ci.result';
+
+/** In-app notification (FR-V3-ENT-007). */
+export interface AppNotification {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  resourceType: string;
+  resourceId: string;
+  read: boolean;
+  createdAt: string;
+}
+
+/** V3 report counts (FR-V3-RPT-001). */
+export interface ReportCounts {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  blocked: number;
+  flaky: number;
+  notRun: number;
+  passRate: number;
+}
+
+/** Project dashboard (FR-V3-ENT-003). */
+export interface ProjectDashboard {
+  workflowSummary: WorkflowSummary;
+  pendingApprovals: Array<{
+    resourceType: string;
+    resourceId: string;
+    title: string;
+    version: number;
+  }>;
+  recentRuns: Array<{
+    id: string;
+    status: ExecutionStatus;
+    browser: string;
+    headed: boolean;
+    mode: ExecutionMode;
+    runScope: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+    metrics: Record<string, unknown> | null;
+  }>;
+  passRate: { total: number; passed: number; failed: number; percent: number };
+  defects: number;
+  recentActivity: AuditEvent[];
 }
 
 /** Standard error contract (FR-BE-001). */

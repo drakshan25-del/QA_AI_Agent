@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
+import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -8,7 +10,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { useProjectId } from '../features/projects/hooks';
 import { useProjectEvents } from '../hooks/useProjectEvents';
-import { analysisApi, requirementsApi } from '../services/api/endpoints';
+import { analysisApi, documentsApi, requirementsApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 import type { Analysis, RequirementAnalysisOutput } from '../services/api/types';
 import { toDisplayString } from '../lib/sanitize';
@@ -75,6 +77,7 @@ function AnalysisCard({ analysis }: { analysis: Analysis }): JSX.Element {
 export function AnalysisPage(): JSX.Element {
   const projectId = useProjectId();
   const qc = useQueryClient();
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   useProjectEvents(projectId);
 
   const requirementsQuery = useQuery({
@@ -87,18 +90,28 @@ export function AnalysisPage(): JSX.Element {
     queryFn: () => analysisApi.list(projectId),
     enabled: !!projectId,
   });
+  const documentsQuery = useQuery({
+    queryKey: qk.documents(projectId),
+    queryFn: () => documentsApi.list(projectId),
+    enabled: !!projectId,
+  });
 
   const runAnalysis = useMutation({
     mutationFn: () => {
+      // Analyse manual requirements AND uploaded documents (FR-IN-008): the
+      // backend derives requirements from document segments before analysing.
       const requirementIds = (requirementsQuery.data ?? []).map((r) => r.id);
-      return analysisApi.createJob(projectId, { requirementIds });
+      const documentIds = (documentsQuery.data ?? []).map((d) => d.id);
+      return analysisApi.createJob(projectId, { requirementIds, documentIds });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setActiveJobId(data.jobId);
       void qc.invalidateQueries({ queryKey: qk.jobs(projectId) });
     },
   });
 
   const reqCount = requirementsQuery.data?.length ?? 0;
+  const docCount = documentsQuery.data?.length ?? 0;
 
   return (
     <div className={L.stack}>
@@ -109,22 +122,27 @@ export function AnalysisPage(): JSX.Element {
           <Button
             variant="primary"
             loading={runAnalysis.isPending}
-            disabled={reqCount === 0 || runAnalysis.isPending}
+            disabled={(reqCount === 0 && docCount === 0) || runAnalysis.isPending}
             onClick={() => runAnalysis.mutate()}
           >
             Analyse {reqCount} requirement{reqCount === 1 ? '' : 's'}
+            {docCount > 0 ? ` + ${docCount} document${docCount === 1 ? '' : 's'}` : ''}
           </Button>
         }
       />
 
       {runAnalysis.isError && <ErrorBanner error={runAnalysis.error} />}
-      {runAnalysis.isSuccess && (
-        <Banner kind="info">
-          Analysis job queued ({runAnalysis.data.status}). Results appear below as each requirement
-          completes.
-        </Banner>
+      {activeJobId && (
+        <LiveJobConsole
+          projectId={projectId}
+          jobId={activeJobId}
+          title="Analysing documents and requirements"
+          onFinished={() => {
+            void qc.invalidateQueries({ queryKey: qk.analyses(projectId) });
+          }}
+        />
       )}
-      {reqCount === 0 && requirementsQuery.isSuccess && (
+      {reqCount === 0 && docCount === 0 && requirementsQuery.isSuccess && documentsQuery.isSuccess && (
         <Banner kind="warn">Add requirements or upload documents first to run analysis.</Banner>
       )}
 

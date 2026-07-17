@@ -10,6 +10,7 @@ import {
 } from '../../common/decorators';
 import { ProjectMemberGuard } from '../../common/access/project-member.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('ci')
 @ApiBearerAuth()
@@ -33,7 +34,18 @@ export class CiController {
     return this.ci.getRun(id, user);
   }
 
+  /** CI run history for the project (FR-V3-CI-002). */
+  @Get('projects/:projectId/runs')
+  @UseGuards(ProjectMemberGuard)
+  async listRuns(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.ci.listRuns(projectId, user);
+  }
+
   @Post('runs/:id/import')
+  @RequirePermission('ci.trigger')
   async importRun(
     @Param('id') id: string,
     @Body() body: { metrics?: Record<string, unknown>; status?: string },

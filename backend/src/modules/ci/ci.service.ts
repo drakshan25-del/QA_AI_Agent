@@ -145,9 +145,24 @@ export class CiService {
     const run = await this.runs.findOne({ where: { id } });
     if (!run) throw new NotFoundAppException(`CI run ${id} not found`);
     await this.membership.ensureMember(run.projectId, user);
-    return run;
+    return Object.assign(run, { ciStatus: ciStateOf(run.status) });
   }
 
+  /** CI run history for the project CI panel (FR-V3-CI-002). */
+  async listRuns(projectId: string, user: AuthUser): Promise<ExecutionRun[]> {
+    await this.membership.ensureMember(projectId, user);
+    const runs = await this.runs.find({
+      where: { projectId, mode: 'ci' },
+      order: { createdAt: 'DESC' },
+      take: 50,
+    });
+    return runs.map((r) => Object.assign(r, { ciStatus: ciStateOf(r.status) }));
+  }
+
+  /**
+   * Import CI results into the platform run record without duplication
+   * (FR-V3-CI-003): re-importing updates the same run.
+   */
   async importRun(
     id: string,
     body: { metrics?: Record<string, unknown>; status?: string },
@@ -156,7 +171,7 @@ export class CiService {
   ): Promise<ExecutionRun> {
     const run = await this.getRun(id, user);
     run.metrics = body.metrics || run.metrics || {};
-    run.status = (body.status as ExecutionRun['status']) || 'completed';
+    run.status = normaliseCiConclusion(body.status);
     run.finishedAt = new Date();
     const saved = await this.runs.save(run);
     await this.audit.record({
@@ -167,14 +182,57 @@ export class CiService {
       resourceId: id,
       projectId: run.projectId,
       correlationId,
-      metadata: { status: run.status },
+      metadata: { status: run.status, ciStatus: ciStateOf(run.status) },
     });
     this.events.emit({
       type: 'ci.status',
       projectId: run.projectId,
       correlationId,
-      payload: { ciRunId: id, status: run.status },
+      payload: { ciRunId: id, status: run.status, ciStatus: ciStateOf(run.status) },
     });
-    return saved;
+    return Object.assign(saved, { ciStatus: ciStateOf(saved.status) });
+  }
+}
+
+/** Map a stored execution status onto the §23.7 CI/CD state machine. */
+function ciStateOf(status: ExecutionRun['status']): string {
+  switch (status) {
+    case 'queued':
+      return 'queued';
+    case 'preparing':
+    case 'running':
+    case 'stopping':
+      return 'in_progress';
+    case 'passed':
+    case 'completed':
+      return 'successful';
+    case 'failed':
+    case 'partially_passed':
+    case 'error':
+    case 'timed_out':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return 'not_triggered';
+  }
+}
+
+/** GitHub conclusions (success/failure/cancelled/…) → execution status. */
+function normaliseCiConclusion(status?: string): ExecutionRun['status'] {
+  switch ((status || '').toLowerCase()) {
+    case 'success':
+    case 'passed':
+    case 'completed':
+      return 'passed';
+    case 'failure':
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
+    case 'timed_out':
+      return 'timed_out';
+    default:
+      return 'passed';
   }
 }

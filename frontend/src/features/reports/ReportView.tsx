@@ -9,7 +9,7 @@ import { EvidencePanel } from '../executions/Timeline';
 import { normaliseReport, type NormalisedFinding } from './reportModel';
 import { executionsApi, findingsApi } from '../../services/api/endpoints';
 import { downloadFile } from '../../services/api/download';
-import type { ExecutionRun, FindingClassification } from '../../services/api/types';
+import type { ExecutionRun, FindingClassification, ReportCounts } from '../../services/api/types';
 import { formatDuration } from '../../lib/format';
 import { toDisplayString } from '../../lib/sanitize';
 import ui from '../../components/ui/ui.module.css';
@@ -20,7 +20,9 @@ const CLASSIFICATIONS: FindingClassification[] = [
   'test_defect',
   'environment',
   'data',
+  'flaky',
   'inconclusive',
+  'unknown',
 ];
 
 function FindingRow({ finding }: { finding: NormalisedFinding }): JSX.Element {
@@ -108,12 +110,39 @@ export function ReportView({
   const model = normaliseReport(report, run);
   const [showRaw, setShowRaw] = useState(false);
 
+  // Reconciled V3 counts (FR-V3-RPT-001), falling back to model counts.
+  const rawCounts = (report.counts ?? {}) as Partial<ReportCounts>;
+  const v3Counts: ReportCounts = {
+    total: rawCounts.total ?? model.counts.total,
+    passed: rawCounts.passed ?? model.counts.passed,
+    failed: rawCounts.failed ?? model.counts.failed,
+    skipped: rawCounts.skipped ?? model.counts.skipped,
+    blocked: rawCounts.blocked ?? 0,
+    flaky: rawCounts.flaky ?? 0,
+    notRun: rawCounts.notRun ?? 0,
+    passRate:
+      rawCounts.passRate ??
+      (model.counts.passed + model.counts.failed > 0
+        ? Math.round(
+            (model.counts.passed / (model.counts.passed + model.counts.failed)) * 100,
+          )
+        : 0),
+  };
+  const meta = [
+    run?.browser && `browser: ${run.browser}`,
+    run && `mode: ${run.headed ? 'headed' : 'headless'} (${run.mode})`,
+    `environment: ${model.environment}`,
+    run?.ciRunId && `CI run: ${run.ciRunId.slice(0, 8)}`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <div className={L.stack}>
       <Card
         title="Summary"
         actions={<StatusBadge status={model.status} />}
-        subtitle={`Environment: ${model.environment}`}
+        subtitle={meta}
       >
         <div className={L.statTiles}>
           <div className={L.stat}>
@@ -135,8 +164,30 @@ export function ReportView({
             <div className={L.statLabel}>Skipped</div>
           </div>
           <div className={L.stat}>
+            <div className={L.statValue} style={{ color: 'var(--warn)' }}>
+              {v3Counts.blocked}
+            </div>
+            <div className={L.statLabel}>Blocked</div>
+          </div>
+          <div className={L.stat}>
+            <div className={L.statValue} style={{ color: 'var(--warn)' }}>
+              {v3Counts.flaky}
+            </div>
+            <div className={L.statLabel}>Flaky</div>
+          </div>
+          <div className={L.stat}>
+            <div className={L.statValue} style={{ color: 'var(--neutral)' }}>
+              {v3Counts.notRun}
+            </div>
+            <div className={L.statLabel}>Not run</div>
+          </div>
+          <div className={L.stat}>
             <div className={L.statValue}>{model.counts.total}</div>
             <div className={L.statLabel}>Total</div>
+          </div>
+          <div className={L.stat}>
+            <div className={L.statValue}>{v3Counts.passRate}%</div>
+            <div className={L.statLabel}>Pass rate</div>
           </div>
           {model.durationSeconds != null && (
             <div className={L.stat}>
@@ -155,7 +206,7 @@ export function ReportView({
 
       <Card title="Export" subtitle="Download the report (FR-REP-005/006)">
         <div className={L.row}>
-          {(['pdf', 'html', 'json', 'junit'] as const).map((fmt) => (
+          {(['pdf', 'html', 'json', 'junit', 'csv'] as const).map((fmt) => (
             <Button
               key={fmt}
               small
@@ -166,7 +217,7 @@ export function ReportView({
                 )
               }
             >
-              {fmt.toUpperCase()}
+              {fmt === 'csv' ? 'Excel/CSV' : fmt.toUpperCase()}
             </Button>
           ))}
         </div>

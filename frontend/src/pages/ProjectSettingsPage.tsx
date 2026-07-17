@@ -52,6 +52,25 @@ export function ProjectSettingsPage(): JSX.Element {
               </div>
             </Card>
 
+            <Card
+              title="Test case ID display (FR-V3-TC-004)"
+              subtitle="Optional zero-padding for TC identifiers; the numeric value is always stored."
+            >
+              <div className={L.row}>
+                {[0, 3, 4].map((pad) => (
+                  <Button
+                    key={pad}
+                    small
+                    variant={project.tcZeroPad === pad ? 'primary' : 'ghost'}
+                    disabled={mutation.isPending}
+                    onClick={() => mutation.mutate({ tcZeroPad: pad })}
+                  >
+                    {pad === 0 ? 'TC-1' : `TC-${'1'.padStart(pad, '0')}`}
+                  </Button>
+                ))}
+              </div>
+            </Card>
+
             <Card title="Configuration">
               {mutation.isError && <ErrorBanner error={mutation.error} />}
               {mutation.isSuccess && !mutation.isError && (

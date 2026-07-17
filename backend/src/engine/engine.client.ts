@@ -33,7 +33,7 @@ export class EngineClient {
     this.token = engine.token;
     this.http = axios.create({
       baseURL: `${this.baseUrl}/internal/v1`,
-      timeout: 120_000,
+      timeout: engine.timeoutMs,
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -45,20 +45,37 @@ export class EngineClient {
     return h;
   }
 
+  /**
+   * POST with bounded exponential backoff on transient failures
+   * (FR-V3-ENT-009): network errors and 502/503/504 are retried up to 3
+   * times (1s → 2s → 4s). Job submits carry an Idempotency-Key so retries
+   * never duplicate side effects.
+   */
   private async post<T>(
     path: string,
     body: unknown,
     correlationId?: string,
     idempotencyKey?: string,
   ): Promise<T> {
-    try {
-      const res = await this.http.post<T>(path, body, {
-        headers: this.headers(correlationId, idempotencyKey),
-      });
-      return res.data;
-    } catch (err) {
-      throw this.wrap(err, `POST ${path}`);
+    const maxAttempts = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await this.http.post<T>(path, body, {
+          headers: this.headers(correlationId, idempotencyKey),
+        });
+        return res.data;
+      } catch (err) {
+        lastErr = err;
+        if (attempt === maxAttempts || !isTransient(err)) break;
+        const delayMs = 1000 * 2 ** (attempt - 1);
+        this.logger.warn(
+          `POST ${path} transient failure (attempt ${attempt}/${maxAttempts}); retrying in ${delayMs}ms`,
+        );
+        await sleep(delayMs);
+      }
     }
+    throw this.wrap(lastErr, `POST ${path}`);
   }
 
   private wrap(err: unknown, ctx: string): EngineException {
@@ -66,9 +83,12 @@ export class EngineClient {
     const detail = (ax.response?.data as Record<string, unknown>) ?? {
       message: ax.message,
     };
-    this.logger.error(`${ctx} failed: ${ax.message}`, undefined);
+    // FastAPI puts the actionable reason (e.g. "Model 'x' is not available in
+    // Ollama...") in `detail`; without it the job error is just a status code.
+    const reason = typeof detail.detail === 'string' ? ` — ${detail.detail}` : '';
+    this.logger.error(`${ctx} failed: ${ax.message}${reason}`, undefined);
     return new EngineException(
-      `Engine call failed (${ctx}): ${ax.message}`,
+      `Engine call failed (${ctx}): ${ax.message}${reason}`,
       redact(detail),
     );
   }
@@ -191,6 +211,13 @@ export class EngineClient {
       allowedDomains?: string;
       targetBaseUrl?: string;
       markers?: string;
+      // V3 runtime settings (FR-V3-EXE-011)
+      timeoutSeconds?: number;
+      retries?: number;
+      workers?: number;
+      slowMoMs?: number;
+      screenshotMode?: string;
+      video?: boolean;
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -271,6 +298,17 @@ export interface EngineParsedDocument {
   parse_status: string;
   message?: string;
   metadata?: Record<string, unknown>;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Transient = worth retrying with backoff (FR-V3-ENT-009). */
+function isTransient(err: unknown): boolean {
+  const ax = err as AxiosError;
+  if (!ax.response) return true; // network / connection error
+  return [502, 503, 504].includes(ax.response.status);
 }
 
 function parseSseFrame(frame: string): EngineSseEvent | null {

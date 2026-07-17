@@ -10,6 +10,9 @@ import { EngineModule } from './engine/engine.module';
 import { AccessModule } from './common/access/access.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { EventsModule } from './modules/events/events.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { SequencesModule } from './modules/sequences/sequences.module';
+import { RetentionModule } from './modules/retention/retention.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -42,6 +45,9 @@ import { HealthModule } from './modules/health/health.module';
     AccessModule,
     AuditModule,
     EventsModule,
+    NotificationsModule,
+    SequencesModule,
+    RetentionModule,
     JobsModule,
     ApprovalsModule,
     // Feature modules (Appendix A)

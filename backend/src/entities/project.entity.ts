@@ -43,6 +43,13 @@ export class Project {
   @Column({ type: 'varchar', default: 'pytest' })
   runner!: Runner;
 
+  /**
+   * Optional zero-padding width for displayed test-case IDs (FR-V3-TC-004):
+   * 0 = TC-1; 4 = TC-0001. The canonical numeric value is always stored.
+   */
+  @Column({ type: 'int', name: 'tc_zero_pad', default: 0 })
+  tcZeroPad!: number;
+
   @Column({ type: 'varchar', name: 'created_by', nullable: true })
   createdBy!: string | null;
 

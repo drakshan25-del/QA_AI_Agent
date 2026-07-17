@@ -61,7 +61,70 @@ export class ApprovalsService {
         return this.testCases as Repository<ObjectLiteral>;
       case 'automation':
         return this.artifacts as Repository<ObjectLiteral>;
+      default:
+        // validation_exception / report gates are record-only decisions
+        // (recordStandalone) — they have no mutable artefact row.
+        throw new ConflictAppException(
+          `Approval type ${type} is record-only; use the dedicated endpoint.`,
+          'unsupported_approval_type',
+        );
     }
+  }
+
+  /**
+   * Record-only approval for gates without a mutable artefact row
+   * (FR-V3-ENT-002): validation exceptions and report publication.
+   */
+  async recordStandalone(
+    type: Extract<ApprovalResourceType, 'validation_exception' | 'report'>,
+    resourceId: string,
+    projectId: string,
+    decision: ApprovalDecision,
+    comment: string,
+    user: AuthUser,
+    correlationId?: string,
+  ): Promise<Approval> {
+    const record = await this.approvals.save(
+      this.approvals.create({
+        projectId,
+        resourceType: type,
+        resourceId,
+        resourceVersion: 1,
+        decision,
+        comment: comment || '',
+        invalidated: false,
+        actorId: user.id,
+        actor: user.email,
+      }),
+    );
+    await this.audit.record({
+      actor: user.email,
+      actorId: user.id,
+      action: `approval.${decision}`,
+      resourceType: type,
+      resourceId,
+      projectId,
+      correlationId,
+      metadata: { decision },
+    });
+    this.events.emit({
+      type: 'approval.updated',
+      projectId,
+      correlationId,
+      payload: { resourceType: type, resourceId, decision },
+    });
+    return record;
+  }
+
+  /** Latest standalone decision for a record-only gate, if any. */
+  async latestStandalone(
+    type: Extract<ApprovalResourceType, 'validation_exception' | 'report'>,
+    resourceId: string,
+  ): Promise<Approval | null> {
+    return this.approvals.findOne({
+      where: { resourceType: type, resourceId },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   private async load(

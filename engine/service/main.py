@@ -50,6 +50,7 @@ from engine.contracts.schemas import (
 )
 from engine.parsers.excel import ExcelParseError, parse_excel
 from engine.service import eventbus, execution
+from engine.service.report_adapter import to_report_data
 from tools.file_ingestion import IngestionError, parse_document
 
 ENGINE_TOKEN = os.environ.get("ENGINE_TOKEN", "dev-engine-token")
@@ -252,7 +253,9 @@ def classify(body: dict = Body(...), x_engine_token: str | None = Header(default
 @app.post("/internal/v1/report")
 def report(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
     _auth(x_engine_token)
-    data = body["data"]
+    # The V2 backend sends {run_summary, tests, metrics}; the V1 renderers
+    # need the full section dict — adapt before rendering (fixes 500s).
+    data = to_report_data(body["data"])
     if "ai_narrative" not in data:
         try:
             summary = report_agent.summarise_run(data.get("run_summary", data))
@@ -283,7 +286,14 @@ def execute(body: dict = Body(...), x_engine_token: str | None = Header(default=
             environment=body.get("environment", "local"),
             target_base_url=body.get("targetBaseUrl", ""),
             allowed_domains=allowed_domains,
-            markers=body.get("markers", ""))
+            markers=body.get("markers", ""),
+            # V3 runtime settings (FR-V3-EXE-011)
+            timeout_seconds=int(body.get("timeoutSeconds") or 900),
+            retries=int(body.get("retries") or 0),
+            workers=int(body.get("workers") or 1),
+            slow_mo_ms=int(body.get("slowMoMs") or 0),
+            screenshot_mode=body.get("screenshotMode", "on-failure"),
+            video=bool(body.get("video", False)))
 
     threading.Thread(target=_run, name=f"exec-{run_id}", daemon=True).start()
     return {"runId": run_id, "status": "running", "eventsUrl": f"/internal/v1/runs/{run_id}/events"}

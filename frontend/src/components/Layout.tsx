@@ -4,6 +4,7 @@ import s from './layout.module.css';
 import { useAuth } from '../auth/AuthContext';
 import { Button } from './ui/Button';
 import { StatusBadge } from './ui/StatusBadge';
+import { NotificationBell } from './NotificationBell';
 import { healthApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 
@@ -54,10 +55,11 @@ export function Layout(): JSX.Element {
             QA
           </span>
           <span>Agentic QA System</span>
-          <span className={s.version}>v2</span>
+          <span className={s.version}>v3</span>
         </div>
         <div className={s.topRight}>
           <HealthPill />
+          <NotificationBell />
           {user && (
             <span className={s.user}>
               {user.name || user.email} · <span className={s.role}>{user.role}</span>

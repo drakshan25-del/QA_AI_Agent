@@ -7,6 +7,7 @@ import {
   Requirement,
   TestCase,
 } from '../../entities';
+import { RequirementsModule } from '../requirements/requirements.module';
 import { TestCasesService } from './test-cases.service';
 import { TestCasesController } from './test-cases.controller';
 
@@ -19,6 +20,7 @@ import { TestCasesController } from './test-cases.controller';
       GenerationRun,
       Project,
     ]),
+    RequirementsModule,
   ],
   controllers: [TestCasesController],
   providers: [TestCasesService],

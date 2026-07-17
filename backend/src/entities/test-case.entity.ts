@@ -27,6 +27,19 @@ export class TestCase {
   @Column({ type: 'varchar', name: 'case_key', default: '' })
   caseKey!: string;
 
+  /**
+   * Canonical numeric value behind the human-readable ID (FR-V3-TC-001/003):
+   * allocated once from the project's concurrency-safe sequence and preserved
+   * across edits and approvals (FR-V3-TC-002). 0 = not yet assigned (legacy).
+   */
+  @Index()
+  @Column({ type: 'int', default: 0 })
+  seq!: number;
+
+  /** Human-readable identifier `TC-{int}` (zero-padded per project setting). */
+  @Column({ type: 'varchar', name: 'human_id', default: '' })
+  humanId!: string;
+
   @Column({ type: 'varchar' })
   title!: string;
 

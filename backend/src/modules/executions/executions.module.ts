@@ -8,7 +8,10 @@ import {
   TestResult,
 } from '../../entities';
 import { ExecutionsService } from './executions.service';
-import { ExecutionsController } from './executions.controller';
+import {
+  ExecutionsController,
+  ProjectExecutionsController,
+} from './executions.controller';
 
 @Module({
   imports: [
@@ -20,7 +23,7 @@ import { ExecutionsController } from './executions.controller';
       Project,
     ]),
   ],
-  controllers: [ExecutionsController],
+  controllers: [ExecutionsController, ProjectExecutionsController],
   providers: [ExecutionsService],
   exports: [ExecutionsService],
 })

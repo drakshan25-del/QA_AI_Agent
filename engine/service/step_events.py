@@ -114,6 +114,26 @@ try:
                 lambda exc: emit_step("error", target=str(exc)[:120], status="failed",
                                       test_name=node),
             )
+            # Console errors and failed network requests are part of the
+            # captured evidence (FR-V3-EXE-010).
+            page.on(
+                "console",
+                lambda msg: (
+                    emit_step("error", target=f"console: {msg.text[:150]}",
+                              status="failed", test_name=node)
+                    if msg.type == "error" else None
+                ),
+            )
+            page.on(
+                "requestfailed",
+                lambda request: emit_step(
+                    "error",
+                    target=f"network: {request.url[:120]}",
+                    value=str(getattr(request, "failure", "") or "")[:80],
+                    status="failed",
+                    test_name=node,
+                ),
+            )
         yield
 except Exception:  # pragma: no cover - pytest always present in engine runtime
     pass

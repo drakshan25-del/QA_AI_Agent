@@ -8,7 +8,7 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { Banner } from '../components/ui/Banner';
 import { useProject, useProjectId } from '../features/projects/hooks';
 import { useProjectEvents } from '../hooks/useProjectEvents';
-import { jobsApi } from '../services/api/endpoints';
+import { jobsApi, projectsApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 import type { WorkflowSummary } from '../services/api/types';
 import { formatRelative } from '../lib/format';
@@ -62,6 +62,13 @@ export function ProjectOverviewPage(): JSX.Element {
   const jobsQuery = useQuery({
     queryKey: qk.jobs(projectId),
     queryFn: () => jobsApi.list(projectId),
+    enabled: !!projectId,
+  });
+  // Project dashboard (FR-V3-ENT-003): pending approvals, recent runs,
+  // pass rate, defects and recent activity.
+  const dashboardQuery = useQuery({
+    queryKey: ['projects', projectId, 'dashboard'],
+    queryFn: () => projectsApi.dashboard(projectId),
     enabled: !!projectId,
   });
 
@@ -123,6 +130,104 @@ export function ProjectOverviewPage(): JSX.Element {
                   ))}
                 </ol>
               </Card>
+
+              {dashboardQuery.data && (
+                <>
+                  <div className={L.statTiles}>
+                    <StatTile
+                      label="Pass rate"
+                      value={`${dashboardQuery.data.passRate.percent}%`}
+                    />
+                    <StatTile label="Defects" value={dashboardQuery.data.defects} />
+                    <StatTile
+                      label="Recent runs"
+                      value={dashboardQuery.data.recentRuns.length}
+                    />
+                  </div>
+
+                  <Card
+                    title="Pending approvals (FR-V3-ENT-003)"
+                    subtitle="Artefacts waiting for a human decision"
+                  >
+                    {dashboardQuery.data.pendingApprovals.length === 0 ? (
+                      <p className={L.muted}>Nothing waiting for approval.</p>
+                    ) : (
+                      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                        {dashboardQuery.data.pendingApprovals.map((p) => (
+                          <li
+                            key={`${p.resourceType}-${p.resourceId}`}
+                            className={L.rowBetween}
+                            style={stageRowStyle}
+                          >
+                            <span>
+                              <StatusBadge status="pending" label={p.resourceType.replace(/_/g, ' ')} />{' '}
+                              <Link
+                                to={
+                                  p.resourceType === 'test_plan'
+                                    ? `/projects/${projectId}/test-plan`
+                                    : p.resourceType === 'test_case'
+                                      ? `/projects/${projectId}/test-cases`
+                                      : `/projects/${projectId}/automation`
+                                }
+                              >
+                                {p.title}
+                              </Link>
+                            </span>
+                            <span className={L.muted}>v{p.version}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+
+                  <Card title="Recent runs">
+                    {dashboardQuery.data.recentRuns.length === 0 ? (
+                      <p className={L.muted}>No execution runs yet.</p>
+                    ) : (
+                      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                        {dashboardQuery.data.recentRuns.slice(0, 6).map((r) => (
+                          <li key={r.id} className={L.rowBetween} style={stageRowStyle}>
+                            <span>
+                              <Link to={`/executions/${r.id}`} className={L.mono}>
+                                {r.id.slice(0, 8)}
+                              </Link>{' '}
+                              <span className={L.muted}>
+                                {r.browser} · {r.headed ? 'headed' : 'headless'} · {r.mode}
+                              </span>
+                            </span>
+                            <span className={L.row}>
+                              {r.finishedAt && (
+                                <span className={L.muted}>{formatRelative(r.finishedAt)}</span>
+                              )}
+                              <StatusBadge status={r.status} />
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+
+                  <Card title="Recent activity" subtitle="Latest audit events (FR-AUD-004)">
+                    {dashboardQuery.data.recentActivity.length === 0 ? (
+                      <p className={L.muted}>No recorded activity yet.</p>
+                    ) : (
+                      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                        {dashboardQuery.data.recentActivity.slice(0, 10).map((a) => (
+                          <li key={a.id} className={L.rowBetween} style={stageRowStyle}>
+                            <span>
+                              <strong>{a.action}</strong>{' '}
+                              <span className={L.muted}>
+                                {a.resourceType} · {a.actor}
+                              </span>
+                            </span>
+                            <span className={L.muted}>{formatRelative(a.createdAt)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+                </>
+              )}
 
               <Card title="Recent generation jobs">
                 <QueryState query={jobsQuery} loadingLabel="Loading jobs…">

@@ -103,6 +103,27 @@ export function validateUpload(
     };
   }
 
+  // FR-V3-ENT-013: quarantine macro-enabled documents and executables before
+  // they ever reach a parser or the AI engine.
+  if (detectExecutable(file.buffer)) {
+    return {
+      ok: false,
+      ext,
+      reason:
+        'File rejected: content matches an executable binary signature and ' +
+        'will not be processed.',
+    };
+  }
+  if (detectMacros(file.originalname, ext, file.buffer)) {
+    return {
+      ok: false,
+      ext,
+      reason:
+        'File rejected: it contains an embedded VBA macro project. Save it ' +
+        'as a macro-free document (.docx/.xlsx) and re-upload.',
+    };
+  }
+
   return { ok: true, ext };
 }
 
@@ -137,6 +158,32 @@ function detectEncrypted(ext: string, buf: Buffer): boolean {
     }
   }
   return false;
+}
+
+/** Executable magic bytes: PE ("MZ"), ELF, Mach-O (FR-V3-ENT-013). */
+function detectExecutable(buf: Buffer): boolean {
+  if (buf.length < 4) return false;
+  if (buf[0] === 0x4d && buf[1] === 0x5a) return true; // MZ (Windows PE)
+  if (buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) {
+    return true; // ELF
+  }
+  const macho = buf.readUInt32BE(0);
+  return [0xfeedface, 0xfeedfacf, 0xcafebabe].includes(macho); // Mach-O / universal
+}
+
+/**
+ * Macro detection (FR-V3-ENT-013): macro-enabled extensions are rejected by
+ * the allow-list already; this additionally scans OOXML zips for an embedded
+ * `vbaProject.bin` part, which marks a macro payload inside a .docx/.xlsx.
+ */
+function detectMacros(filename: string, ext: string, buf: Buffer): boolean {
+  const lowerName = filename.toLowerCase();
+  if (/\.(docm|xlsm|pptm|dotm|xltm)$/.test(lowerName)) return true;
+  if (ext !== '.docx' && ext !== '.xlsx') return false;
+  if (buf.length < 4 || buf[0] !== 0x50 || buf[1] !== 0x4b) return false;
+  // ZIP central directory holds plain-text entry names.
+  const haystack = buf.toString('latin1');
+  return haystack.includes('vbaProject.bin');
 }
 
 function detectZipBomb(ext: string, buf: Buffer): boolean {

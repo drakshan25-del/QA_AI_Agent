@@ -18,6 +18,7 @@ import {
   CurrentUser,
 } from '../../common/decorators';
 import { ProjectMemberGuard } from '../../common/access/project-member.guard';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('automation')
 @ApiBearerAuth()
@@ -26,6 +27,7 @@ export class AutomationController {
   constructor(private readonly automation: AutomationService) {}
 
   @Post('projects/:projectId/automation/generate')
+  @RequirePermission('generation.run')
   @HttpCode(202)
   @UseGuards(ProjectMemberGuard)
   async generate(
@@ -58,7 +60,10 @@ export class AutomationController {
     return this.automation.getOne(id, user);
   }
 
+  /** Async validation job with live logs (FR-V3-LOG-005) → 202 {jobId}. */
   @Post('automation/:id/validate')
+  @RequirePermission('generation.run')
+  @HttpCode(202)
   async validate(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,
@@ -67,7 +72,25 @@ export class AutomationController {
     return this.automation.validate(id, user, correlationId);
   }
 
+  /** Governed validation exception (FR-V3-ENT-002, §23.3). */
+  @Post('automation/:id/validation-override')
+  @RequirePermission('approval.decide')
+  async overrideValidation(
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: AuthUser,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.automation.overrideValidation(
+      id,
+      body?.reason || '',
+      user,
+      correlationId,
+    );
+  }
+
   @Post('automation/:id/approval')
+  @RequirePermission('approval.decide')
   async approval(
     @Param('id') id: string,
     @Body() dto: ApprovalDto,

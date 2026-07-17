@@ -46,9 +46,16 @@ export function useProjectEvents(
           break;
         case 'job.completed':
         case 'job.failed':
+        case 'job.cancelled':
         case 'job.progress':
           invalidate(['projects', projectId, 'jobs']);
           invalidate(['projects', projectId]);
+          break;
+        case 'notification.new':
+          invalidate(['notifications']);
+          break;
+        case 'ci.status':
+          invalidate(['ci', projectId]);
           break;
         default:
           break;

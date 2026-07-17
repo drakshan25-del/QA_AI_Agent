@@ -67,17 +67,51 @@ function StepRow({ step }: { step: TimelineStep }): JSX.Element {
   );
 }
 
-/** Ordered timeline grouped by test (FR-EXE-006). */
-export function Timeline({ state }: { state: TimelineState }): JSX.Element {
+export interface TimelineFilter {
+  /** Only show steps with this status (running/passed/failed/skipped). */
+  status?: string;
+  /** Case-insensitive match on test name / target / action (§23.3.2). */
+  query?: string;
+}
+
+/** Ordered timeline grouped by test with filters (FR-EXE-006, §23.3.2). */
+export function Timeline({
+  state,
+  filter,
+}: {
+  state: TimelineState;
+  filter?: TimelineFilter;
+}): JSX.Element {
   if (state.steps.length === 0) {
     return <p className={L.muted}>No steps yet — waiting for the runner to emit events…</p>;
   }
+  const q = (filter?.query ?? '').toLowerCase();
+  const matches = (step: TimelineStep) => {
+    if (filter?.status && step.status !== filter.status) return false;
+    if (
+      q &&
+      ![step.testName, step.target, step.actionType, step.currentUrl]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    ) {
+      return false;
+    }
+    return true;
+  };
   const groups = new Map<string, TimelineStep[]>();
   for (const id of state.order) groups.set(id, []);
   for (const step of state.steps) {
+    if (!matches(step)) continue;
     const arr = groups.get(step.testCaseId) ?? [];
     arr.push(step);
     groups.set(step.testCaseId, arr);
+  }
+  for (const [id, steps] of groups) {
+    if (steps.length === 0) groups.delete(id);
+  }
+  if (groups.size === 0) {
+    return <p className={L.muted}>No steps match the current filters.</p>;
   }
 
   return (

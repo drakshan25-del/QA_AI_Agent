@@ -37,7 +37,26 @@ export class AutomationService {
     private readonly jobs: JobsService,
     private readonly approvals: ApprovalsService,
     private readonly engine: EngineClient,
-  ) {}
+  ) {
+    this.jobs.registerRetryHandler('automation', (original, user, correlationId) =>
+      this.generate(
+        original.projectId,
+        {
+          testCaseIds: (original.inputRefs?.testCaseIds as string[]) ?? [],
+          draftPreview: !!original.inputRefs?.draftPreview,
+        },
+        user,
+        correlationId,
+      ),
+    );
+    this.jobs.registerRetryHandler('validation', (original, user, correlationId) =>
+      this.validate(
+        (original.inputRefs?.artifactId as string) ?? '',
+        user,
+        correlationId,
+      ),
+    );
+  }
 
   async generate(
     projectId: string,
@@ -90,7 +109,18 @@ export class AutomationService {
       metadata: { testCases: cases.length, draftPreview: !!dto.draftPreview },
     });
 
-    this.jobs.dispatch(job, async () => {
+    this.jobs.dispatch(job, async (j, ctx) => {
+      await ctx.log({
+        stage: 'framework selection',
+        message: `Generating ${project.runner} Playwright automation for ${cases.length} approved test case(s)`,
+        progress: 10,
+      });
+      await ctx.checkpoint();
+      await ctx.log({
+        stage: 'file generation',
+        message: `Creating page objects, locators and assertions with ${project.llmModel || 'the default model'}`,
+        progress: 25,
+      });
       const output = await this.engine.automation(
         {
           testCases: cases.map((c) => ({
@@ -110,6 +140,11 @@ export class AutomationService {
         correlationId,
         idempotencyKey,
       );
+      await ctx.log({
+        stage: 'formatting',
+        message: 'Generated files returned; formatting and persisting artefacts',
+        progress: 80,
+      });
 
       const run = await this.runs.save(
         this.runs.create({
@@ -189,25 +224,23 @@ export class AutomationService {
     });
   }
 
+  /**
+   * Validation runs as an async job with a live log console
+   * (FR-V3-LOG-005, §23.7 validation state machine).
+   */
   async validate(id: string, user: AuthUser, correlationId?: string) {
     const art = await this.getOne(id, user);
     const project = await this.projects.findOne({
       where: { id: art.projectId },
     });
-    const report = await this.engine.validate(
-      {
-        files: [{ path: art.path, content: art.content }],
-        allowedDomains: (project?.allowedDomains || 'localhost,127.0.0.1').split(
-          ',',
-        ),
-        runCollection: true,
-      },
+
+    const job = await this.jobs.create({
+      projectId: art.projectId,
+      type: 'validation',
       correlationId,
-    );
-    const passed = report.passed === true;
-    art.validationReport = report;
-    art.validationStatus = passed ? 'passed' : 'failed';
-    await this.artifacts.save(art);
+      inputRefs: { artifactId: id, path: art.path },
+      createdBy: user.id,
+    });
 
     await this.audit.record({
       actor: user.email,
@@ -217,17 +250,122 @@ export class AutomationService {
       resourceId: id,
       projectId: art.projectId,
       correlationId,
-      metadata: { passed },
+      metadata: { jobId: job.id },
     });
 
+    art.validationStatus = 'running';
+    await this.artifacts.save(art);
+
+    this.jobs.dispatch(job, async (j, ctx) => {
+      await ctx.log({
+        stage: 'syntax',
+        message: `Validating ${art.path}: Python syntax, imports and Pytest collection`,
+        progress: 15,
+      });
+      const report = await this.engine.validate(
+        {
+          files: [{ path: art.path, content: art.content }],
+          allowedDomains: (
+            project?.allowedDomains || 'localhost,127.0.0.1'
+          ).split(','),
+          runCollection: true,
+        },
+        correlationId,
+      );
+      await ctx.log({
+        stage: 'policy scan',
+        message:
+          'Checking forbidden operations, hard-coded secrets, locator quality and the domain allow-list',
+        progress: 70,
+      });
+
+      const passed = report.passed === true;
+      const findings = (report.findings as { severity?: string }[]) || [];
+      const warnings = findings.filter(
+        (f) => (f.severity || '').toLowerCase() === 'warning',
+      );
+      const fresh = await this.artifacts.findOne({ where: { id } });
+      if (fresh) {
+        fresh.validationReport = report;
+        fresh.validationStatus = passed
+          ? warnings.length
+            ? 'passed_with_warnings'
+            : 'passed'
+          : 'failed';
+        await this.artifacts.save(fresh);
+      }
+      await ctx.log({
+        stage: 'result',
+        severity: passed ? (warnings.length ? 'warning' : 'success') : 'error',
+        message: passed
+          ? warnings.length
+            ? `Validation passed with ${warnings.length} warning(s)`
+            : 'Validation passed'
+          : `Validation failed with ${findings.length} finding(s)`,
+        progress: 95,
+      });
+
+      this.events.emit({
+        type: 'validation.ready',
+        projectId: art.projectId,
+        jobId: job.id,
+        correlationId,
+        payload: {
+          artifactId: id,
+          passed,
+          validationStatus: fresh?.validationStatus,
+        },
+      });
+
+      return {
+        resultRefs: {
+          artifactId: id,
+          validationStatus: fresh?.validationStatus ?? 'failed',
+        },
+        warnings: warnings.length && passed ? [`${warnings.length} validation warning(s)`] : [],
+      };
+    });
+
+    return { jobId: job.id, status: job.status, artifactId: id };
+  }
+
+  /**
+   * Governed validation exception (FR-V3-ENT-002, §23.3): an authorised role
+   * can override a failed validation with a recorded reason. The artefact
+   * moves to the `overridden` validation state and the decision is stored as
+   * a `validation_exception` approval record.
+   */
+  async overrideValidation(
+    id: string,
+    reason: string,
+    user: AuthUser,
+    correlationId?: string,
+  ) {
+    const art = await this.getOne(id, user);
+    if (!reason?.trim()) {
+      throw new ConflictAppException(
+        'A written reason is required to override validation.',
+        'reason_required',
+      );
+    }
+    art.validationStatus = 'overridden';
+    await this.artifacts.save(art);
+    await this.approvals.recordStandalone(
+      'validation_exception',
+      id,
+      art.projectId,
+      'approved',
+      reason,
+      user,
+      correlationId,
+    );
     this.events.emit({
       type: 'validation.ready',
       projectId: art.projectId,
       correlationId,
-      payload: { artifactId: id, passed },
+      payload: { artifactId: id, passed: true, validationStatus: 'overridden' },
     });
-
-    return { artifactId: id, validationStatus: art.validationStatus, report };
+    return { artifactId: id, validationStatus: art.validationStatus };
   }
 
   async approve(
@@ -238,8 +376,12 @@ export class AutomationService {
     correlationId?: string,
   ) {
     const art = await this.getOne(id, user);
-    // FR-AUT-010 precondition: an artefact must be validated before approval.
-    if (decision === 'approved' && art.validationStatus !== 'passed') {
+    // FR-AUT-010 precondition: an artefact must be validated before approval
+    // (a governed override counts, §23.3).
+    const validated = ['passed', 'passed_with_warnings', 'overridden'].includes(
+      art.validationStatus,
+    );
+    if (decision === 'approved' && !validated) {
       throw new ConflictAppException(
         `Automation ${id} must pass validation before approval ` +
           `(current: ${art.validationStatus}).`,

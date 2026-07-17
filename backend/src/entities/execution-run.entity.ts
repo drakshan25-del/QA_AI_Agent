@@ -39,6 +39,21 @@ export class ExecutionRun {
   @Column({ type: 'simple-json', name: 'test_paths', nullable: true })
   testPaths!: string[] | null;
 
+  /** Run scope: selected | failed | all (FR-V3-EXE-007). */
+  @Column({ type: 'varchar', name: 'run_scope', default: 'selected' })
+  runScope!: string;
+
+  /**
+   * Effective runtime settings persisted with the run (FR-V3-EXE-011):
+   * timeoutSeconds, retries, workers, slowMoMs, screenshotMode, video.
+   */
+  @Column({ type: 'simple-json', nullable: true })
+  settings!: Record<string, unknown> | null;
+
+  /** When this run is a restart, the run it restarts (FR-V3-EXE-008). */
+  @Column({ type: 'varchar', name: 'restart_of_run_id', nullable: true })
+  restartOfRunId!: string | null;
+
   @Column({ type: 'simple-json', nullable: true })
   metrics!: Record<string, unknown> | null;
 

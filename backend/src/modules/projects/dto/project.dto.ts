@@ -56,6 +56,15 @@ export class CreateProjectDto {
   @IsOptional()
   @IsIn(['pytest', 'playwright-test'])
   runner?: Runner;
+
+  @ApiPropertyOptional({
+    description: 'Zero-pad width for displayed TC IDs, 0 = none (FR-V3-TC-004)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(8)
+  tcZeroPad?: number;
 }
 
 export class UpdateProjectDto {
@@ -110,6 +119,15 @@ export class UpdateProjectDto {
   @IsOptional()
   @IsIn(['pytest', 'playwright-test'])
   runner?: Runner;
+
+  @ApiPropertyOptional({
+    description: 'Zero-pad width for displayed TC IDs, 0 = none (FR-V3-TC-004)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(8)
+  tcZeroPad?: number;
 }
 
 export class AddMemberDto {

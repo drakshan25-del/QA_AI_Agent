@@ -20,6 +20,7 @@ import {
   CurrentUser,
 } from '../../common/decorators';
 import { ProjectMemberGuard } from '../../common/access/project-member.guard';
+import { RequirePermission } from '../../common/access/permissions';
 
 @ApiTags('test-cases')
 @ApiBearerAuth()
@@ -28,6 +29,7 @@ export class TestCasesController {
   constructor(private readonly cases: TestCasesService) {}
 
   @Post('projects/:projectId/test-cases/generate')
+  @RequirePermission('generation.run')
   @HttpCode(202)
   @UseGuards(ProjectMemberGuard)
   async generate(
@@ -85,6 +87,7 @@ export class TestCasesController {
   }
 
   @Patch('test-cases/:id')
+  @RequirePermission('artefact.edit')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateTestCaseDto,
@@ -95,6 +98,7 @@ export class TestCasesController {
   }
 
   @Post('test-cases/approval')
+  @RequirePermission('approval.decide')
   async approve(
     @Body() dto: BulkApprovalDto,
     @CurrentUser() user: AuthUser,

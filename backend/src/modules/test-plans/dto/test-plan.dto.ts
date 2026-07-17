@@ -24,4 +24,11 @@ export class UpdateTestPlanDto {
   @IsOptional()
   @IsObject()
   sections?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Human summary recorded on the new revision (FR-V3-TP-002)',
+  })
+  @IsOptional()
+  @IsString()
+  changeSummary?: string;
 }

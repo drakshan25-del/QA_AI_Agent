@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
+import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -17,6 +19,9 @@ export function ValidationPage(): JSX.Element {
   const projectId = useProjectId();
   const qc = useQueryClient();
   useProjectEvents(projectId);
+  const [activeJob, setActiveJob] = useState<{ jobId: string; path: string } | null>(
+    null,
+  );
 
   const listQuery = useQuery({
     queryKey: qk.automation(projectId),
@@ -24,18 +29,34 @@ export function ValidationPage(): JSX.Element {
     enabled: !!projectId,
   });
 
+  // Validation runs as an async job with a live console (FR-V3-LOG-005).
   const validate = useMutation({
-    mutationFn: (id: string) => automationApi.validate(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.automation(projectId) }),
+    mutationFn: (input: { id: string; path: string }) =>
+      automationApi.validate(input.id),
+    onSuccess: (res, input) => {
+      const jobId = (res as { jobId?: string }).jobId;
+      if (jobId) setActiveJob({ jobId, path: input.path });
+      void qc.invalidateQueries({ queryKey: qk.automation(projectId) });
+    },
   });
 
   return (
     <div className={L.stack}>
       <PageHeader
         title="Validation"
-        subtitle="Static checks by file, rule, severity and location (FR-VAL-006)"
+        subtitle="Static checks by file, rule, severity and location (FR-VAL-006, FR-V3-LOG-005)"
       />
       {validate.isError && <ErrorBanner error={validate.error} />}
+      {activeJob && (
+        <LiveJobConsole
+          projectId={projectId}
+          jobId={activeJob.jobId}
+          title={`Validating ${activeJob.path}`}
+          onFinished={() =>
+            void qc.invalidateQueries({ queryKey: qk.automation(projectId) })
+          }
+        />
+      )}
       <QueryState query={listQuery} loadingLabel="Loading automation…">
         {(artifacts) =>
           artifacts.length === 0 ? (
@@ -54,8 +75,8 @@ export function ValidationPage(): JSX.Element {
                       <StatusBadge status={a.validationStatus} label={`validation: ${a.validationStatus}`} />
                       <Button
                         small
-                        loading={validate.isPending && validate.variables === a.id}
-                        onClick={() => validate.mutate(a.id)}
+                        loading={validate.isPending && validate.variables?.id === a.id}
+                        onClick={() => validate.mutate({ id: a.id, path: a.path })}
                       >
                         Re-validate
                       </Button>

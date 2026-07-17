@@ -1,29 +1,42 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
   Analysis,
   GenerationRun,
   Project,
   Requirement,
   TestPlan,
+  TestPlanRevision,
 } from '../../entities';
 import { AuthUser } from '../../common/decorators';
 import { NotFoundAppException } from '../../common/errors';
 import { contentHash } from '../../common/hash';
+import { deriveArtefactState } from '../../common/state-machines';
 import { AuditService } from '../audit/audit.service';
 import { EventsService } from '../events/events.service';
 import { JobsService } from '../jobs/jobs.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
 import { EngineClient } from '../../engine/engine.client';
 import { ApprovalDecision } from '../../common/enums';
 import { GenerateTestPlanDto, UpdateTestPlanDto } from './dto/test-plan.dto';
+
+/** Section-level revision comparison entry (FR-V3-TP-003). */
+export interface RevisionSectionDiff {
+  section: string;
+  change: 'added' | 'removed' | 'changed' | 'unchanged';
+  from: unknown;
+  to: unknown;
+}
 
 @Injectable()
 export class TestPlansService {
   constructor(
     @InjectRepository(TestPlan) private readonly plans: Repository<TestPlan>,
+    @InjectRepository(TestPlanRevision)
+    private readonly revisions: Repository<TestPlanRevision>,
     @InjectRepository(Requirement)
     private readonly requirements: Repository<Requirement>,
     @InjectRepository(Analysis) private readonly analyses: Repository<Analysis>,
@@ -35,8 +48,22 @@ export class TestPlansService {
     private readonly events: EventsService,
     private readonly jobs: JobsService,
     private readonly approvals: ApprovalsService,
+    private readonly derivation: RequirementDerivationService,
     private readonly engine: EngineClient,
-  ) {}
+  ) {
+    // Retry recreates the generation from the stored inputRefs (FR-V3-LOG-009).
+    this.jobs.registerRetryHandler('test_plan', (original, user, correlationId) =>
+      this.generate(
+        original.projectId,
+        {
+          requirementIds:
+            (original.inputRefs?.requirementIds as string[]) ?? undefined,
+        },
+        user,
+        correlationId,
+      ),
+    );
+  }
 
   async generate(
     projectId: string,
@@ -49,10 +76,15 @@ export class TestPlansService {
     const project = await this.projects.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundAppException(`Project ${projectId} not found`);
 
-    const reqWhere = dto.requirementIds?.length
-      ? { projectId, id: In(dto.requirementIds) }
-      : { projectId };
-    const requirements = await this.requirements.find({ where: reqWhere });
+    // Include requirements derived from uploaded documents (FR-IN-008), so
+    // the plan covers documents even when no manual requirements exist.
+    const requirements = await this.derivation.resolveGenerationScope(
+      projectId,
+      dto.requirementIds,
+      undefined,
+      user,
+      correlationId,
+    );
     const analyses = await this.analyses.find({ where: { projectId } });
 
     const job = await this.jobs.create({
@@ -74,7 +106,19 @@ export class TestPlansService {
       correlationId,
     });
 
-    this.jobs.dispatch(job, async () => {
+    this.jobs.dispatch(job, async (j, ctx) => {
+      await ctx.log({
+        stage: 'requirement mapping',
+        message: `Mapping ${requirements.length} requirement(s) and ${analyses.length} analysis result(s) into the plan scope`,
+        progress: 10,
+      });
+      await ctx.checkpoint();
+
+      await ctx.log({
+        stage: 'scope generation',
+        message: `Generating plan sections with ${project.llmModel || 'the default model'} (objectives, scope, environments, entry/exit criteria)`,
+        progress: 25,
+      });
       const output = await this.engine.testPlan(
         {
           projectName: project.name,
@@ -92,6 +136,12 @@ export class TestPlansService {
         correlationId,
         idempotencyKey,
       );
+      await ctx.log({
+        stage: 'risk analysis',
+        message: 'Plan sections returned; validating structure and risk coverage',
+        progress: 75,
+      });
+      await ctx.checkpoint();
 
       const run = await this.runs.save(
         this.runs.create({
@@ -105,6 +155,11 @@ export class TestPlansService {
         }),
       );
 
+      await ctx.log({
+        stage: 'persistence',
+        message: 'Saving the test plan and opening revision v1',
+        progress: 90,
+      });
       const plan = await this.plans.save(
         this.plans.create({
           projectId,
@@ -120,6 +175,9 @@ export class TestPlansService {
         }),
       );
 
+      // Revision history starts at v1 (FR-V3-TP-001).
+      await this.saveRevision(plan, user, 'generated', 'Initial generated plan');
+
       return {
         resultRefs: { testPlanId: plan.id, generationRunId: run.id },
         readyEvent: {
@@ -132,19 +190,58 @@ export class TestPlansService {
     return { jobId: job.id, status: job.status };
   }
 
-  async listByProject(projectId: string, user: AuthUser): Promise<TestPlan[]> {
+  /** Append the next v{int} revision snapshot (FR-V3-TP-001/002). */
+  private async saveRevision(
+    plan: TestPlan,
+    user: AuthUser | null,
+    sourceAction: string,
+    changeSummary: string,
+  ): Promise<TestPlanRevision> {
+    const last = await this.revisions.findOne({
+      where: { testPlanId: plan.id },
+      order: { version: 'DESC' },
+    });
+    const version = (last?.version ?? 0) + 1;
+    plan.version = version;
+    await this.plans.save(plan);
+    return this.revisions.save(
+      this.revisions.create({
+        testPlanId: plan.id,
+        projectId: plan.projectId,
+        version,
+        title: plan.title,
+        sections: plan.sections,
+        contentHash: plan.contentHash,
+        sourceAction,
+        changeSummary,
+        approvalStatus: plan.approvalStatus,
+        author: user?.email ?? 'system',
+        authorId: user?.id ?? null,
+      }),
+    );
+  }
+
+  async listByProject(projectId: string, user: AuthUser) {
     await this.membership.ensureMember(projectId, user);
-    return this.plans.find({
+    const plans = await this.plans.find({
       where: { projectId },
       order: { createdAt: 'DESC' },
     });
+    return plans.map((p) => this.withState(p));
   }
 
   async getOne(id: string, user: AuthUser): Promise<TestPlan> {
     const plan = await this.plans.findOne({ where: { id } });
     if (!plan) throw new NotFoundAppException(`Test plan ${id} not found`);
     await this.membership.ensureMember(plan.projectId, user);
-    return plan;
+    return this.withState(plan);
+  }
+
+  /** Attach the §23.7 artefact lifecycle state without a data migration. */
+  private withState(plan: TestPlan): TestPlan & { artefactState: string } {
+    return Object.assign(plan, {
+      artefactState: deriveArtefactState(plan),
+    });
   }
 
   async update(
@@ -154,13 +251,24 @@ export class TestPlansService {
     correlationId?: string,
   ): Promise<TestPlan> {
     const plan = await this.getOne(id, user);
-    if (dto.title !== undefined) plan.title = dto.title;
+    const changed: string[] = [];
+    if (dto.title !== undefined && dto.title !== plan.title) {
+      plan.title = dto.title;
+      changed.push('title');
+    }
     if (dto.sections) {
+      changed.push(...Object.keys(dto.sections));
       plan.sections = { ...(plan.sections || {}), ...dto.sections };
     }
-    plan.version += 1;
     plan.contentHash = contentHash(plan.sections);
-    const saved = await this.plans.save(plan);
+
+    // Every saved edit becomes the next v{int} revision (FR-V3-TP-001).
+    await this.saveRevision(
+      plan,
+      user,
+      'edited',
+      dto.changeSummary || `Edited: ${changed.join(', ') || 'no-op'}`,
+    );
 
     // Editing an approved plan resets its approval (FR-VAL-007).
     await this.approvals.onUpstreamModified(
@@ -178,7 +286,7 @@ export class TestPlansService {
       resourceId: id,
       projectId: plan.projectId,
       correlationId,
-      metadata: { version: saved.version },
+      metadata: { version: plan.version, changed },
     });
     return this.getOne(id, user);
   }
@@ -190,8 +298,8 @@ export class TestPlansService {
     user: AuthUser,
     correlationId?: string,
   ) {
-    await this.getOne(id, user);
-    return this.approvals.decide(
+    const plan = await this.getOne(id, user);
+    const result = await this.approvals.decide(
       'test_plan',
       id,
       decision,
@@ -199,6 +307,110 @@ export class TestPlansService {
       user,
       correlationId,
     );
+    // Mirror the decision onto the latest revision's metadata (FR-V3-TP-002).
+    const latest = await this.revisions.findOne({
+      where: { testPlanId: plan.id },
+      order: { version: 'DESC' },
+    });
+    if (latest) {
+      latest.approvalStatus =
+        decision === 'approved'
+          ? 'approved'
+          : decision === 'rejected'
+            ? 'rejected'
+            : 'pending';
+      await this.revisions.save(latest);
+    }
+    return result;
+  }
+
+  // --- revision history (FR-V3-TP-001/002/003) -----------------------------
+
+  async listRevisions(id: string, user: AuthUser): Promise<TestPlanRevision[]> {
+    await this.getOne(id, user);
+    return this.revisions.find({
+      where: { testPlanId: id },
+      order: { version: 'DESC' },
+    });
+  }
+
+  async getRevision(
+    id: string,
+    version: number,
+    user: AuthUser,
+  ): Promise<TestPlanRevision> {
+    await this.getOne(id, user);
+    const rev = await this.revisions.findOne({
+      where: { testPlanId: id, version },
+    });
+    if (!rev) {
+      throw new NotFoundAppException(`Revision v${version} of plan ${id} not found`);
+    }
+    return rev;
+  }
+
+  /** Side-by-side comparison of two revisions (FR-V3-TP-003). */
+  async compareRevisions(
+    id: string,
+    fromVersion: number,
+    toVersion: number,
+    user: AuthUser,
+  ): Promise<{
+    from: TestPlanRevision;
+    to: TestPlanRevision;
+    sections: RevisionSectionDiff[];
+  }> {
+    const [from, to] = await Promise.all([
+      this.getRevision(id, fromVersion, user),
+      this.getRevision(id, toVersion, user),
+    ]);
+    const keys = new Set([
+      ...Object.keys(from.sections || {}),
+      ...Object.keys(to.sections || {}),
+    ]);
+    keys.delete('schema_version');
+    const sections: RevisionSectionDiff[] = [...keys].sort().map((section) => {
+      const a = (from.sections || {})[section];
+      const b = (to.sections || {})[section];
+      const change =
+        a === undefined
+          ? 'added'
+          : b === undefined
+            ? 'removed'
+            : JSON.stringify(a) === JSON.stringify(b)
+              ? 'unchanged'
+              : 'changed';
+      return { section, change, from: a, to: b };
+    });
+    return { from, to, sections };
+  }
+
+  /** Restore an older revision as a new latest revision (FR-V3-TP-003). */
+  async restoreRevision(
+    id: string,
+    version: number,
+    user: AuthUser,
+    correlationId?: string,
+  ): Promise<TestPlan> {
+    const plan = await this.getOne(id, user);
+    const rev = await this.getRevision(id, version, user);
+    plan.sections = rev.sections;
+    plan.title = rev.title || plan.title;
+    plan.contentHash = contentHash(plan.sections);
+    await this.saveRevision(plan, user, 'restored', `Restored from v${version}`);
+
+    await this.approvals.onUpstreamModified('test_plan', id, user, correlationId);
+    await this.audit.record({
+      actor: user.email,
+      actorId: user.id,
+      action: 'test_plan.restore_revision',
+      resourceType: 'test_plan',
+      resourceId: id,
+      projectId: plan.projectId,
+      correlationId,
+      metadata: { restoredFrom: version, newVersion: plan.version },
+    });
+    return this.getOne(id, user);
   }
 
   async export(
@@ -213,7 +425,7 @@ export class TestPlansService {
         contentType: 'application/json',
         filename: `${base}.json`,
         body: JSON.stringify(
-          { id: plan.id, title: plan.title, sections: plan.sections },
+          { id: plan.id, title: plan.title, version: plan.version, sections: plan.sections },
           null,
           2,
         ),

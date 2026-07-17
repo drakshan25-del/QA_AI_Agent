@@ -6,6 +6,7 @@
 import { http } from './client';
 import type {
   Analysis,
+  AppNotification,
   Approval,
   AuditEvent,
   Coverage,
@@ -15,6 +16,10 @@ import type {
   ExecutionEventRow,
   ExecutionPlan,
   ExecutionRun,
+  JobLogEntry,
+  ProjectDashboard,
+  RevisionComparison,
+  TestPlanRevision,
   Finding,
   GeneratedArtifact,
   HealthStatus,
@@ -92,6 +97,11 @@ export const projectsApi = {
   },
   async exportProject(id: string): Promise<Record<string, unknown>> {
     const { data } = await http.get<Record<string, unknown>>(`/projects/${id}/export`);
+    return data;
+  },
+  /** Project dashboard (FR-V3-ENT-003). */
+  async dashboard(id: string): Promise<ProjectDashboard> {
+    const { data } = await http.get<ProjectDashboard>(`/projects/${id}/dashboard`);
     return data;
   },
 };
@@ -253,6 +263,29 @@ export const testPlansApi = {
   exportUrl(id: string, format: 'md' | 'json' | 'docx' | 'pdf'): string {
     return `/test-plans/${id}/export?format=${format}`;
   },
+  /** Revision history v1, v2, v3 ... (FR-V3-TP-001/002/003). */
+  async revisions(id: string): Promise<TestPlanRevision[]> {
+    const { data } = await http.get<TestPlanRevision[]>(`/test-plans/${id}/revisions`);
+    return data;
+  },
+  async compareRevisions(
+    id: string,
+    from: number,
+    to: number,
+  ): Promise<RevisionComparison> {
+    const { data } = await http.get<RevisionComparison>(
+      `/test-plans/${id}/revisions/compare`,
+      { params: { from, to } },
+    );
+    return data;
+  },
+  async restoreRevision(id: string, version: number): Promise<TestPlan> {
+    const { data } = await http.post<TestPlan>(
+      `/test-plans/${id}/revisions/${version}/restore`,
+      {},
+    );
+    return data;
+  },
 };
 
 // ---- Test cases (FR-TC-*) --------------------------------------------------
@@ -343,6 +376,14 @@ export const automationApi = {
     const { data } = await http.get<ExecutionPlan>(`/automation/${id}/execution-plan`);
     return data;
   },
+  /** Governed validation exception (FR-V3-ENT-002, §23.3). */
+  async overrideValidation(
+    id: string,
+    reason: string,
+  ): Promise<{ artifactId: string; validationStatus: string }> {
+    const { data } = await http.post(`/automation/${id}/validation-override`, { reason });
+    return data as { artifactId: string; validationStatus: string };
+  },
 };
 
 // ---- Executions (FR-EXE-*) -------------------------------------------------
@@ -370,14 +411,43 @@ export const executionsApi = {
     const { data } = await http.get<Record<string, unknown>>(`/executions/${id}/report`);
     return data;
   },
-  async generateReport(id: string): Promise<Record<string, unknown>> {
-    const { data } = await http.post<Record<string, unknown>>(
+  /** Restart control (FR-V3-EXE-008): new run with the same configuration. */
+  async restart(id: string): Promise<{ id: string; status: string }> {
+    const { data } = await http.post(`/executions/${id}/restart`, {});
+    return data as { id: string; status: string };
+  },
+  async listByProject(projectId: string): Promise<ExecutionRun[]> {
+    const { data } = await http.get<ExecutionRun[]>(`/projects/${projectId}/executions`);
+    return data;
+  },
+  async results(id: string): Promise<TestResult[]> {
+    const { data } = await http.get<TestResult[]>(`/executions/${id}/results`);
+    return data;
+  },
+  /** Async report generation (FR-V3-LOG-006) → {jobId}. */
+  async generateReport(id: string): Promise<JobAccepted> {
+    const { data } = await http.post<JobAccepted>(
       `/executions/${id}/report/generate`,
       {},
     );
     return data;
   },
-  reportExportUrl(id: string, format: 'pdf' | 'html' | 'json' | 'junit'): string {
+  /** Report publication gate (FR-V3-ENT-002). */
+  async approveReport(
+    id: string,
+    decision: ApprovalDecision,
+    comment?: string,
+  ): Promise<{ executionRunId: string; decision: string }> {
+    const { data } = await http.post(`/executions/${id}/report/approval`, {
+      decision,
+      comment,
+    });
+    return data as { executionRunId: string; decision: string };
+  },
+  reportExportUrl(
+    id: string,
+    format: 'pdf' | 'html' | 'json' | 'junit' | 'csv',
+  ): string {
     return `/executions/${id}/report/export?format=${format}`;
   },
 };
@@ -436,6 +506,67 @@ export const jobsApi = {
   },
   async list(projectId: string): Promise<Job[]> {
     const { data } = await http.get<Job[]>(`/projects/${projectId}/jobs`);
+    return data;
+  },
+  /** Persisted live-log entries for replay after refresh (FR-V3-LOG-008). */
+  async logs(id: string, fromSeq = 0): Promise<JobLogEntry[]> {
+    const { data } = await http.get<JobLogEntry[]>(`/jobs/${id}/logs`, {
+      params: { fromSeq },
+    });
+    return data;
+  },
+  /** Cancel an eligible long-running job (FR-V3-LOG-009). */
+  async cancel(id: string): Promise<Job> {
+    const { data } = await http.post<Job>(`/jobs/${id}/cancel`, {});
+    return data;
+  },
+  /** Retry a finished job as a traceable new attempt (FR-V3-LOG-009). */
+  async retry(id: string): Promise<{ jobId: string; status: string }> {
+    const { data } = await http.post(`/jobs/${id}/retry`, {});
+    return data as { jobId: string; status: string };
+  },
+};
+
+// ---- Notifications (FR-V3-ENT-007) ------------------------------------------
+
+export const notificationsApi = {
+  async list(unreadOnly = false): Promise<AppNotification[]> {
+    const { data } = await http.get<AppNotification[]>('/notifications', {
+      params: unreadOnly ? { unread: 'true' } : {},
+    });
+    return data;
+  },
+  async unreadCount(): Promise<number> {
+    const { data } = await http.get<{ count: number }>('/notifications/unread-count');
+    return data.count;
+  },
+  async markRead(id: string): Promise<AppNotification> {
+    const { data } = await http.post<AppNotification>(`/notifications/${id}/read`, {});
+    return data;
+  },
+  async markAllRead(): Promise<{ updated: number }> {
+    const { data } = await http.post<{ updated: number }>('/notifications/read-all', {});
+    return data;
+  },
+};
+
+// ---- CI/CD (FR-V3-CI-*) ------------------------------------------------------
+
+export const ciApi = {
+  async dispatch(projectId: string, workflow?: string, ref?: string) {
+    const { data } = await http.post('/ci/workflows/dispatch', {
+      projectId,
+      workflow,
+      ref,
+    });
+    return data as { ciRunId: string; status: string; mode: string; ciUrl: string };
+  },
+  async listRuns(projectId: string): Promise<ExecutionRun[]> {
+    const { data } = await http.get<ExecutionRun[]>(`/ci/projects/${projectId}/runs`);
+    return data;
+  },
+  async getRun(id: string): Promise<ExecutionRun> {
+    const { data } = await http.get<ExecutionRun>(`/ci/runs/${id}`);
     return data;
   },
 };
