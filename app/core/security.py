@@ -34,11 +34,6 @@ def find_secrets(text: str) -> list[str]:
     return findings
 
 
-PRIVATE_HOST_RE = re.compile(
-    r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)"
-)
-
-
 def is_domain_allowed(url: str, allowed_domains: list[str]) -> bool:
     """True if the URL's host matches the project allow-list (SEC-003).
 

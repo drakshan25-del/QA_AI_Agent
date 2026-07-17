@@ -196,6 +196,9 @@ class TestApprovals:
                 type="test_file",
                 path="automation/generated_tests/test_login.py",
                 content="def test_login(page): ...",
+                # Approval requires a passing validation report (FR-VAL-005 /
+                # SEC-005); the gate itself is covered in test_security_gates.py.
+                validation_report={"passed": True, "issues": []},
             )
             db.add(row)
             db.commit()

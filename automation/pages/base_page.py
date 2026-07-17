@@ -15,6 +15,15 @@ import re
 
 from playwright.sync_api import Locator, Page, expect
 
+try:
+    # Live execution step emission (FR-EXE-006). No-op when the engine has not
+    # set QA_EVENT_SINK, so standalone/V1 test runs are unaffected.
+    from engine.service.step_events import emit_step
+except Exception:  # pragma: no cover - engine package not importable in some runs
+
+    def emit_step(*_args, **_kwargs) -> None:  # type: ignore[misc]
+        return None
+
 
 class BasePage:
     """Minimal, deterministic base class for sync-Playwright page objects.
@@ -40,7 +49,10 @@ class BasePage:
         target = self.path if path is None else path
         if not target.startswith("/"):
             target = "/" + target
-        self.page.goto(f"{self.base_url}{target}")
+        url = f"{self.base_url}{target}"
+        emit_step("navigate", target=url, status="running", current_url=url)
+        self.page.goto(url)
+        emit_step("navigate", target=url, status="passed", current_url=url)
 
     # -- accessibility-first locator helpers (FR-AUT-003) --------------------
 
@@ -66,11 +78,15 @@ class BasePage:
 
     def assert_visible(self, locator: Locator) -> None:
         """Assert the element becomes visible (auto-waiting, no sleeps)."""
+        emit_step("assert", target="visible", status="running")
         expect(locator).to_be_visible()
+        emit_step("assert", target="visible", status="passed")
 
     def assert_contains_text(self, locator: Locator, text: str) -> None:
         """Assert the element's text contains ``text`` (auto-waiting)."""
+        emit_step("assert", target=f"contains_text:{text}", status="running")
         expect(locator).to_contain_text(text)
+        emit_step("assert", target=f"contains_text:{text}", status="passed")
 
     def assert_count(self, locator: Locator, count: int) -> None:
         """Assert the locator resolves to exactly ``count`` elements."""

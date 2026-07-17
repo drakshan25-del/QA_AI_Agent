@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.env
+*.sqlite
+*.sqlite-journal
+qa_v2.dev.sqlite*
+evidence/
+*.log
+.DS_Store

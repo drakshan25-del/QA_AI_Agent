@@ -1,0 +1,39 @@
+{
+  "name": "qa-ai-frontend",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Agentic AI Quality Assurance System V2 — React frontend (FR-FE-001..006)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc -b"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.59.0",
+    "axios": "1.7.7",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-router-dom": "6.26.2",
+    "react-syntax-highlighter": "15.5.0",
+    "socket.io-client": "4.8.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.5.0",
+    "@testing-library/react": "16.0.1",
+    "@testing-library/user-event": "14.5.2",
+    "@types/node": "22.7.4",
+    "@types/react": "18.3.11",
+    "@types/react-dom": "18.3.0",
+    "@types/react-syntax-highlighter": "15.5.13",
+    "@vitejs/plugin-react": "4.3.2",
+    "jsdom": "25.0.1",
+    "typescript": "5.6.2",
+    "vite": "5.4.8",
+    "vitest": "2.1.2"
+  }
+}

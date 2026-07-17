@@ -2,10 +2,13 @@
 
 POST /test-cases/automation turns approved test cases (FR-HITL — unapproved
 cases are refused with 409) into Playwright pytest files via the Automation
-Agent (FR-AUT-001..008), writes them safely to disk, runs the validation gate
-(FR-VAL-001..005) and stores each file as a :class:`GeneratedArtifact` with
-its validation report. POST /artifacts/{id}/validate re-runs the gate.
-Every mutation records an audit event (FR-AUD-001).
+Agent (FR-AUT-001..008), runs the validation gate against a throw-away
+temp-dir mirror FIRST (FR-VAL-001..005, SEC-005 — nothing touches the
+working tree until the gate passes), writes the files to disk only on a
+passing report, and stores each file as a :class:`GeneratedArtifact` with
+its validation report (failed generations are stored as ``draft`` with the
+failing report and no file on disk). POST /artifacts/{id}/validate re-runs
+the gate. Every mutation records an audit event (FR-AUD-001).
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from app.core.logging import get_logger, new_correlation_id
 from app.models.db import get_db
 from app.models.entities import GeneratedArtifact, GenerationRun, Project, TestCase
 from app.services.audit import record_event
-from app.services.validation import validate_paths
+from app.services.validation import validate_generated_code, validate_paths
 
 logger = get_logger(__name__)
 
@@ -159,22 +162,36 @@ def generate_automation(
         output = automation_agent.generate_automation(
             case_dicts, base_url, _page_objects_summary()
         )
-        written_paths = automation_agent.write_generated_files(output.files)
     except OllamaUnavailableError as exc:
         run.status, run.error = "error", str(exc)
         run.duration_seconds = round(time.perf_counter() - started, 3)
         db.commit()
         raise HTTPException(status_code=503, detail=str(exc)) from None
-    except FileExistsError as exc:
-        run.status, run.error = "error", str(exc)
-        run.duration_seconds = round(time.perf_counter() - started, 3)
-        db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from None
     except RuntimeError as exc:
         run.status, run.error = "error", str(exc)
         run.duration_seconds = round(time.perf_counter() - started, 3)
         db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    # Validation gate BEFORE any disk write (FR-VAL-001..005, SEC-005):
+    # validate_generated_code mirrors the in-memory files into a throw-away
+    # temp directory for pytest collection, so nothing touches the working
+    # tree until the gate passes (same pattern as graph.nodes.validate_code).
+    report = validate_generated_code(
+        [{"path": f.path, "content": f.content} for f in output.files],
+        project.allowed_domain_list,
+    )
+    report_dump = report.model_dump()
+
+    written_paths: list[str] = []
+    if report.passed:
+        try:
+            written_paths = automation_agent.write_generated_files(output.files)
+        except FileExistsError as exc:
+            run.status, run.error = "error", str(exc)
+            run.duration_seconds = round(time.perf_counter() - started, 3)
+            db.commit()
+            raise HTTPException(status_code=409, detail=str(exc)) from None
 
     run.status = "success"
     run.duration_seconds = round(time.perf_counter() - started, 3)
@@ -184,10 +201,9 @@ def generate_automation(
     )
     db.commit()
 
-    # Validation gate on the real files (FR-VAL-001..005, SEC-005).
-    report = validate_paths(written_paths, allowed_domains=project.allowed_domain_list)
-    report_dump = report.model_dump()
-
+    # Store every generated file as a draft artifact with its report. When the
+    # gate failed nothing was written, so the artifact keeps the agent-proposed
+    # path and the failing report for the human to review (SEC-005).
     written_by_name = {p.rsplit("/", 1)[-1]: p for p in written_paths}
     artifacts: list[GeneratedArtifact] = []
     for gen_file in output.files:

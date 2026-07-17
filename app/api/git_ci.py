@@ -13,7 +13,7 @@ event (FR-AUD-001).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,8 +21,10 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.logging import new_correlation_id
 from app.models.db import get_db
-from app.models.entities import ExecutionRun, GeneratedArtifact
+from app.models.entities import GeneratedArtifact, Project
+from app.models.schemas import ExecutionRunOut
 from app.services.audit import record_event
+from app.services.ci_import import import_ci_run
 from tools.git_tools import (
     GitCommandError,
     commit_files,
@@ -186,30 +188,51 @@ def ci_dispatch(body: CIDispatchRequest, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/ci/runs/{run_id}")
-def ci_run_status(run_id: int, db: Session = Depends(get_db)) -> dict:
-    """Fetch CI run status and sync it onto a linked ExecutionRun (FR-CI-002)."""
+def ci_run_status(run_id: int) -> dict:
+    """Fetch the status of a CI workflow run (FR-CI-002)."""
     try:
-        status = get_workflow_run(run_id)
+        return get_workflow_run(run_id)
     except GitHubNotConfiguredError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
     except GitHubAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from None
 
-    linked = db.scalars(
-        select(ExecutionRun)
-        .where(ExecutionRun.ci_run_id == str(run_id))
-        .order_by(ExecutionRun.created_at.desc())
-    ).first()
-    if linked is not None:
-        linked.ci_url = status.get("html_url") or linked.ci_url
-        metrics = dict(linked.metrics or {})
-        metrics["ci_status"] = status.get("status")
-        metrics["ci_conclusion"] = status.get("conclusion")
-        linked.metrics = metrics
-        if status.get("status") == "in_progress":
-            linked.status = "running"
-        elif status.get("status") == "completed":
-            linked.status = "completed" if status.get("conclusion") == "success" else "error"
-        db.commit()
-        status["execution_run_id"] = linked.id
-    return status
+
+@router.post("/ci/runs/{run_id}/import", status_code=201)
+def ci_run_import(
+    run_id: int,
+    project_id: str = Query(description="Project the imported run belongs to"),
+    actor: str = Query(default="local-user"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Import a CI run's results as a CI-mode ExecutionRun (AC9, FR-CI-002/003).
+
+    Fetches the workflow run, downloads its artifacts and parses the JUnit
+    report into ``TestResult`` rows via :func:`app.services.ci_import.import_ci_run`;
+    the import itself is recorded on the audit trail (FR-AUD-001).
+    """
+    if db.get(Project, project_id) is None:
+        raise HTTPException(status_code=404, detail=f"Project {project_id!r} not found.")
+    try:
+        run = import_ci_run(db, project_id, run_id)
+    except GitHubNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except GitHubAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    record_event(
+        db,
+        actor=actor,
+        action="ci.import",
+        resource=f"execution_run:{run.id}",
+        correlation_id=new_correlation_id(),
+        project_id=project_id,
+        ci_run_id=str(run_id),
+        status=run.status,
+        results_imported=int((run.metrics or {}).get("total", 0)),
+    )
+    return {
+        "execution_run": ExecutionRunOut.model_validate(run).model_dump(),
+        "source_commit": run.source_commit,
+        "results_imported": int((run.metrics or {}).get("total", 0)),
+    }

@@ -1,0 +1,42 @@
+.layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+}
+.treeItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.treeItem:hover {
+  background: var(--surface-2);
+}
+.treeItemActive {
+  background: var(--info-bg);
+}
+.treePath {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  word-break: break-all;
+}

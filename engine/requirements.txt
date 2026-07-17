@@ -1,0 +1,4 @@
+# Engine service dependencies (reuses the repo root packages + adds the API layer).
+# Install into the shared .venv: .venv/bin/pip install -r engine/requirements.txt
+-r ../requirements.txt
+openpyxl>=3.1

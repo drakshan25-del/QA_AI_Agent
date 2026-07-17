@@ -31,8 +31,19 @@ class SampleItemsPage(BasePage):
         self.add_button.click()
 
     def delete_item(self, index: int = 0) -> None:
-        """Click the Delete button of the item at ``index``."""
+        """Click the Delete button of the item at ``index``.
+
+        Prefer :meth:`delete_item_by_text` where possible — index-based
+        selection is order-dependent (see the locator policy, FR-AUT-003).
+        """
         self.delete_buttons.nth(index).click()
+
+    def delete_item_by_text(self, text: str) -> None:
+        """Click the Delete button inside the item containing ``text``.
+
+        Text-scoped deletion is stable regardless of list order (FR-AUT-003).
+        """
+        self.item_with_text(text).get_by_role("button", name="Delete").click()
 
     def item_with_text(self, text: str) -> Locator:
         """Locator for the list item(s) whose text contains ``text``."""

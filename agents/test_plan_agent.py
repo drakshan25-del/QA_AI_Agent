@@ -114,6 +114,8 @@ def generate_test_plan(
     base_url: str,
     requirements: list[dict],
     analyses: list[dict],
+    model: str | None = None,
+    temperature: float | None = None,
 ) -> TestPlanOutput:
     """Generate a full §8.4 test plan for a project (FR-TP-001, FR-TP-002).
 
@@ -122,6 +124,10 @@ def generate_test_plan(
         base_url: Base URL of the application under test.
         requirements: Dicts of ``{id, title, text, acceptance_criteria}``.
         analyses: Serialised ``RequirementAnalysisOutput`` dicts (may be empty).
+        model: Optional per-project model override (FR-PROJ-003); ``None``
+            falls back to the global settings model.
+        temperature: Optional per-project temperature override (FR-PROJ-003);
+            ``None`` falls back to the global settings temperature.
 
     Returns:
         A validated ``TestPlanOutput`` with all sections populated.
@@ -131,9 +137,10 @@ def generate_test_plan(
         RuntimeError: If the model cannot produce a valid structured output
             within ``llm_max_retries`` retries (never returns unvalidated text).
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
-    model = get_chat_model().with_structured_output(TestPlanOutput)
+    effective_model = model or settings.llm_model
+    chat = get_chat_model(model, temperature).with_structured_output(TestPlanOutput)
     messages = [
         ("system", SYSTEM_PROMPT),
         ("human", _build_user_prompt(project_name, base_url, requirements, analyses)),
@@ -144,7 +151,7 @@ def generate_test_plan(
     for attempt in range(1, attempts + 1):
         started = time.perf_counter()
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             elapsed = time.perf_counter() - started
             if not isinstance(result, TestPlanOutput):
                 raise ValueError("model returned no valid structured output")
@@ -168,7 +175,7 @@ def generate_test_plan(
 
     raise RuntimeError(
         f"Test plan generation failed to produce a valid structured output "
-        f"after {attempts} attempts (model={settings.llm_model}, "
+        f"after {attempts} attempts (model={effective_model}, "
         f"prompt={PROMPT_VERSION}). Last error: {last_error}"
     ) from last_error
 

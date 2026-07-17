@@ -18,6 +18,8 @@ committed/executed; SEC-005).
 from __future__ import annotations
 
 import hashlib
+import json
+import time
 from typing import Any
 
 from langgraph.types import interrupt
@@ -43,6 +45,7 @@ from app.models.entities import (
     ExecutionRun,
     Finding,
     GeneratedArtifact,
+    GenerationRun,
     Project,
     Requirement,
     TestCase,
@@ -63,8 +66,9 @@ from graph.state import QAWorkflowState
 
 logger = get_logger(__name__)
 
-#: Minimum cases requested per requirement (FR-TC-003 coverage, demo-sized).
-MIN_CASES_PER_REQUIREMENT = 6
+#: Minimum cases requested per requirement (FR-TC-003 coverage; SRS §18 AC3
+#: demands >= 10 cases per requirement).
+MIN_CASES_PER_REQUIREMENT = 10
 
 #: Human-readable inventory of page objects fed to the Automation Agent
 #: (FR-AUT-001; kept in sync with automation/pages/ and automation/conftest.py).
@@ -90,6 +94,59 @@ _VALID_DECISIONS = {"approved", "rejected", "regenerate"}
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_payload(payload: Any) -> str:
+    """Stable sha256 of a JSON-serialisable payload (NFR-EXP-001).
+
+    Mirrors ``app.api.generation._sha256_of`` so hashes recorded by the graph
+    path and the API path are comparable for identical inputs/outputs.
+    """
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _new_generation_run(
+    db: Session, project_id: str, kind: str, prompt_version: str
+) -> GenerationRun:
+    """Create a pending :class:`GenerationRun` row for one agent invocation.
+
+    The graph path persists the same reproducibility record as the API path
+    (NFR-EXP-001): kind, effective model metadata, prompt version, duration
+    and sha256 input/output hashes are filled in by :func:`_finish_generation_run`.
+    """
+    metadata = generation_metadata()
+    run = GenerationRun(
+        project_id=project_id,
+        kind=kind,
+        model=metadata["model"],
+        prompt_version=prompt_version,
+        parameters=metadata,
+        status="pending",
+    )
+    db.add(run)
+    db.flush()  # assign run.id so domain rows can link generation_run_id
+    return run
+
+
+def _finish_generation_run(
+    run: GenerationRun,
+    *,
+    started: float,
+    input_payload: Any = None,
+    output_payload: Any = None,
+    error: str = "",
+) -> None:
+    """Record duration, hashes and terminal status on a generation run."""
+    run.duration_seconds = round(time.perf_counter() - started, 3)
+    if error:
+        run.status = "error"
+        run.error = error
+    else:
+        run.status = "success"
+        run.input_hash = _sha256_payload(input_payload)
+        run.output_hash = _sha256_payload(output_payload)
 
 
 def _requirement_dict(req: Requirement) -> dict[str, Any]:
@@ -250,7 +307,12 @@ def analyse_requirements(state: QAWorkflowState) -> dict[str, Any]:
 
 
 def generate_plan(state: QAWorkflowState) -> dict[str, Any]:
-    """Generate and persist the project test plan (FR-TP-001..002)."""
+    """Generate and persist the project test plan (FR-TP-001..002).
+
+    Persists a :class:`GenerationRun` (kind ``test_plan``) alongside the plan
+    so the graph path carries the same reproducibility record as the API path
+    (NFR-EXP-001).
+    """
     errors: list[str] = []
     plan_dump: dict[str, Any] | None = None
     db = SessionLocal()
@@ -258,14 +320,39 @@ def generate_plan(state: QAWorkflowState) -> dict[str, Any]:
         project = db.get(Project, state["project_id"])
         requirements = [_requirement_dict(r) for r in _load_requirements(db, state)]
         analyses = list((state.get("analyses") or {}).values())
-        plan = test_plan_agent.generate_test_plan(
-            project.name if project else state["project_id"],
-            (project.base_url if project else "") or get_settings().target_base_url,
-            requirements,
-            analyses,
+        project_name = project.name if project else state["project_id"]
+        base_url = (project.base_url if project else "") or get_settings().target_base_url
+
+        run = _new_generation_run(
+            db, state["project_id"], "test_plan", test_plan_agent.PROMPT_VERSION
         )
+        started = time.perf_counter()
+        try:
+            plan = test_plan_agent.generate_test_plan(
+                project_name, base_url, requirements, analyses
+            )
+        except Exception as exc:
+            _finish_generation_run(run, started=started, error=str(exc))
+            db.commit()  # keep the failed-run record (NFR-EXP-001)
+            raise
         plan_dump = plan.model_dump()
-        db.add(TestPlan(project_id=state["project_id"], content=plan_dump))
+        _finish_generation_run(
+            run,
+            started=started,
+            input_payload={
+                "project": project_name,
+                "requirements": requirements,
+                "analyses": analyses,
+            },
+            output_payload=plan_dump,
+        )
+        db.add(
+            TestPlan(
+                project_id=state["project_id"],
+                content=plan_dump,
+                generation_run_id=run.id,
+            )
+        )
         db.commit()
     except Exception as exc:  # noqa: BLE001 — degrade, don't crash (NFR-REL-001)
         errors.append(f"generate_plan: {exc}")
@@ -291,11 +378,23 @@ def generate_cases(state: QAWorkflowState) -> dict[str, Any]:
     db = SessionLocal()
     try:
         for req in _load_requirements(db, state):
+            run = _new_generation_run(
+                db, state["project_id"], "test_cases", test_case_agent.PROMPT_VERSION
+            )
+            started = time.perf_counter()
             try:
+                req_dict = _requirement_dict(req)
                 output = test_case_agent.generate_test_cases(
-                    _requirement_dict(req),
+                    req_dict,
                     analyses.get(req.id),
                     min_cases=MIN_CASES_PER_REQUIREMENT,
+                )
+                output_dump = output.model_dump()
+                _finish_generation_run(
+                    run,
+                    started=started,
+                    input_payload={**req_dict, "analysis": analyses.get(req.id)},
+                    output_payload=output_dump,
                 )
                 for case in output.test_cases:
                     row = TestCase(
@@ -312,11 +411,13 @@ def generate_cases(state: QAWorkflowState) -> dict[str, Any]:
                         expected_results=list(case.expected_results),
                         automation_suitability=case.automation_suitability,
                         review_status="draft",
+                        generation_run_id=run.id,
                     )
                     db.add(row)
                     db.flush()  # assign row.id for traceability in state
                     case_dicts.append({"id": row.id, **case.model_dump()})
             except Exception as exc:  # noqa: BLE001 — degrade per requirement
+                _finish_generation_run(run, started=started, error=str(exc))
                 errors.append(f"generate_cases[{req.id}]: {exc}")
         db.commit()
     except Exception as exc:  # noqa: BLE001
@@ -445,10 +546,29 @@ def generate_automation(state: QAWorkflowState) -> dict[str, Any]:
 
         project = db.get(Project, state["project_id"])
         base_url = (project.base_url if project else "") or get_settings().target_base_url
-        output = automation_agent.generate_automation(
-            case_dicts, base_url, PAGE_OBJECTS_SUMMARY
+
+        run = _new_generation_run(
+            db,
+            state["project_id"],
+            "automation",
+            getattr(automation_agent, "PROMPT_VERSION", "v1"),
         )
+        started = time.perf_counter()
+        try:
+            output = automation_agent.generate_automation(
+                case_dicts, base_url, PAGE_OBJECTS_SUMMARY
+            )
+        except Exception as exc:
+            _finish_generation_run(run, started=started, error=str(exc))
+            db.commit()  # keep the failed-run record (NFR-EXP-001)
+            raise
         files = [f.model_dump() for f in output.files]
+        _finish_generation_run(
+            run,
+            started=started,
+            input_payload={"test_cases": case_dicts, "base_url": base_url},
+            output_payload=files,
+        )
         for gen_file in output.files:
             db.add(
                 GeneratedArtifact(
@@ -458,6 +578,7 @@ def generate_automation(state: QAWorkflowState) -> dict[str, Any]:
                     content=gen_file.content,
                     content_hash=_sha256(gen_file.content),
                     test_case_ids=list(gen_file.test_case_ids),
+                    generation_run_id=run.id,
                     approval_status="draft",
                 )
             )

@@ -23,6 +23,7 @@ from app.core.security import redact_secrets
 from app.models.entities import ExecutionRun, Project, TestCase, TestResult
 from app.models.schemas import ExecutionRequest
 from app.services.results import collect_evidence, parse_junit
+from tools.git_tools import repo_status
 from tools.playwright_execution import REPO_ROOT, cancel_run, run_pytest
 
 logger = get_logger(__name__)
@@ -41,6 +42,18 @@ _TC_SCAN_WINDOW_BELOW = 8  # lines of docstring/body below the def
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _current_head_commit() -> str:
+    """Best-effort HEAD commit for run provenance (AC11, NFR-EXP-001).
+
+    Never fails a run over git state: any error (no git binary, not a repo,
+    unborn branch, timeout) yields an empty string.
+    """
+    try:
+        return str(repo_status().get("head_commit") or "")
+    except Exception:  # noqa: BLE001 — provenance is best-effort, never fatal
+        return ""
 
 
 def _slugify(value: str) -> str:
@@ -176,6 +189,7 @@ def start_local_execution(db: Session, project_id: str, request: ExecutionReques
         project_id=project_id,
         mode="local",
         status="running",
+        source_commit=_current_head_commit(),  # AC11 provenance
         environment=request.environment,  # FR-EXE-001
         browser=request.browser,  # FR-EXE-003
         headed=request.headed,

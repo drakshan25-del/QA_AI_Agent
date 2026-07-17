@@ -45,8 +45,30 @@ def _sha256_of(payload: Any) -> str:
     ).hexdigest()
 
 
-def _new_generation_run(db: Session, project_id: str, kind: str, prompt_version: str) -> GenerationRun:
-    metadata = generation_metadata()
+def _project_llm_overrides(project: Project | None) -> tuple[str | None, float | None]:
+    """Per-project LLM overrides (FR-PROJ-003).
+
+    Returns ``(model, temperature)`` where an empty ``Project.llm_model``
+    yields ``None`` (fall back to global settings). The stored per-project
+    temperature is always passed — its default matches the global default.
+    """
+    if project is None:
+        return None, None
+    model = (project.llm_model or "").strip() or None
+    return model, project.llm_temperature
+
+
+def _new_generation_run(
+    db: Session,
+    project_id: str,
+    kind: str,
+    prompt_version: str,
+    model: str | None = None,
+    temperature: float | None = None,
+) -> GenerationRun:
+    """Create a pending GenerationRun; ``parameters`` records the *effective*
+    model/temperature after per-project overrides (FR-PROJ-003, NFR-EXP-001)."""
+    metadata = generation_metadata(model, temperature)
     run = GenerationRun(
         project_id=project_id,
         kind=kind,
@@ -87,13 +109,19 @@ def analyse_requirement(requirement_id: str, db: Session = Depends(get_db)) -> d
         raise HTTPException(
             status_code=404, detail=f"Requirement {requirement_id!r} not found."
         )
+    model, temperature = _project_llm_overrides(db.get(Project, requirement.project_id))
     try:
-        require_ollama()
+        require_ollama(model)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
     run = _new_generation_run(
-        db, requirement.project_id, "analysis", requirement_agent.PROMPT_VERSION
+        db,
+        requirement.project_id,
+        "analysis",
+        requirement_agent.PROMPT_VERSION,
+        model=model,
+        temperature=temperature,
     )
     input_payload = {
         "requirement_id": requirement.id,
@@ -106,6 +134,8 @@ def analyse_requirement(requirement_id: str, db: Session = Depends(get_db)) -> d
             requirement.text,
             list(requirement.acceptance_criteria or []),
             requirement_id=requirement.id,
+            model=model,
+            temperature=temperature,
         )
     except OllamaUnavailableError as exc:
         _finish_run(db, run, status="error", duration=time.perf_counter() - started, error=str(exc))
@@ -130,7 +160,10 @@ def analyse_requirement(requirement_id: str, db: Session = Depends(get_db)) -> d
         assumptions=output.get("assumptions", []),
         gaps=output.get("issues", []),
         risk=output.get("risk", {}),
-        model_metadata={**generation_metadata(), "prompt_version": run.prompt_version},
+        model_metadata={
+            **generation_metadata(model, temperature),
+            "prompt_version": run.prompt_version,
+        },
     )
     requirement.status = "analysed"
     db.add(analysis)
@@ -169,8 +202,9 @@ def generate_test_plan(project_id: str, db: Session = Depends(get_db)) -> dict:
             detail="The project has no requirements yet; ingest requirements "
             "before generating a test plan.",
         )
+    model, temperature = _project_llm_overrides(project)
     try:
-        require_ollama()
+        require_ollama(model)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
@@ -194,10 +228,24 @@ def generate_test_plan(project_id: str, db: Session = Depends(get_db)) -> dict:
             analyses.append(latest.structured_output or {})
 
     base_url = project.base_url or get_settings().target_base_url
-    run = _new_generation_run(db, project_id, "test_plan", test_plan_agent.PROMPT_VERSION)
+    run = _new_generation_run(
+        db,
+        project_id,
+        "test_plan",
+        test_plan_agent.PROMPT_VERSION,
+        model=model,
+        temperature=temperature,
+    )
     started = time.perf_counter()
     try:
-        plan = test_plan_agent.generate_test_plan(project.name, base_url, req_dicts, analyses)
+        plan = test_plan_agent.generate_test_plan(
+            project.name,
+            base_url,
+            req_dicts,
+            analyses,
+            model=model,
+            temperature=temperature,
+        )
     except OllamaUnavailableError as exc:
         _finish_run(db, run, status="error", duration=time.perf_counter() - started, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from None
@@ -258,8 +306,9 @@ def generate_test_cases(
         raise HTTPException(
             status_code=404, detail=f"Requirement {requirement_id!r} not found."
         )
+    model, temperature = _project_llm_overrides(db.get(Project, requirement.project_id))
     try:
-        require_ollama()
+        require_ollama(model)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
@@ -277,11 +326,22 @@ def generate_test_cases(
     analysis_dict = latest_analysis.structured_output if latest_analysis is not None else None
 
     run = _new_generation_run(
-        db, requirement.project_id, "test_cases", test_case_agent.PROMPT_VERSION
+        db,
+        requirement.project_id,
+        "test_cases",
+        test_case_agent.PROMPT_VERSION,
+        model=model,
+        temperature=temperature,
     )
     started = time.perf_counter()
     try:
-        output = test_case_agent.generate_test_cases(req_dict, analysis_dict, min_cases=min_cases)
+        output = test_case_agent.generate_test_cases(
+            req_dict,
+            analysis_dict,
+            min_cases=min_cases,
+            model=model,
+            temperature=temperature,
+        )
     except OllamaUnavailableError as exc:
         _finish_run(db, run, status="error", duration=time.perf_counter() - started, error=str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from None

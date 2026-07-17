@@ -24,8 +24,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      # §12.2: reproducible dependency set — install from the pip-freeze lock.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-lock.txt
 
       - name: Install Playwright browsers
         run: playwright install --with-deps chromium
@@ -38,8 +39,9 @@ jobs:
           python -m uvicorn sample_app.main:app --port 8001 &
           sleep 3
 
+      # §12.2: publish machine-readable (JUnit) and human-readable (HTML) reports.
       - name: Run smoke and generated tests
-        run: pytest -m "smoke or generated" --junitxml=reports/junit.xml --screenshot only-on-failure --tracing retain-on-failure --output artifacts/ci
+        run: pytest -m "smoke or generated" --junitxml=reports/junit.xml --html=reports/report.html --self-contained-html --screenshot only-on-failure --tracing retain-on-failure --output artifacts/ci
 
       # §12.2 step 9: always publish reports and traces, even on failure.
       - name: Upload reports and artifacts

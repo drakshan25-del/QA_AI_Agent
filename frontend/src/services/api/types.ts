@@ -1,0 +1,557 @@
+/**
+ * Domain types mirroring the V2 backend contract (V2_CONTRACT §2, §3, §5).
+ * These are the wire shapes the browser exchanges with the backend over
+ * `/api/v2/*`. Kept in sync with backend `src/entities/*` and `common/enums.ts`.
+ */
+
+// ---- Enums (V2_CONTRACT §1, §5) --------------------------------------------
+
+export type Role =
+  | 'qa_engineer'
+  | 'automation_engineer'
+  | 'developer'
+  | 'supervisor'
+  | 'devops'
+  | 'admin';
+
+export const ROLES: Role[] = [
+  'qa_engineer',
+  'automation_engineer',
+  'developer',
+  'supervisor',
+  'devops',
+  'admin',
+];
+
+export type DocumentCategory =
+  | 'user_story'
+  | 'epic'
+  | 'srs'
+  | 'api_doc'
+  | 'architecture';
+
+export const DOCUMENT_CATEGORIES: DocumentCategory[] = [
+  'user_story',
+  'epic',
+  'srs',
+  'api_doc',
+  'architecture',
+];
+
+export type ProjectStatus = 'active' | 'archived';
+export type Runner = 'pytest' | 'playwright-test';
+
+export type JobType = 'analysis' | 'test_plan' | 'test_cases' | 'automation';
+export type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export type ApprovalDecision = 'approved' | 'rejected' | 'regenerate';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+
+export type ArtifactStatus = 'active' | 'superseded';
+export type ValidationStatus = 'pending' | 'passed' | 'failed';
+
+export type ExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'error'
+  | 'cancelled';
+export type ExecutionMode = 'local' | 'ci';
+
+export type FindingClassification =
+  | 'app_defect'
+  | 'test_defect'
+  | 'environment'
+  | 'data'
+  | 'inconclusive';
+
+export type ApprovalResourceType = 'test_plan' | 'test_case' | 'automation';
+
+/** Live status a UI element can present (FR-FE-003). */
+export type UiStatus =
+  | 'idle'
+  | 'loading'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'passed'
+  | 'failed'
+  | 'skipped'
+  | 'error'
+  | 'cancelled';
+
+// ---- Realtime envelope (V2_CONTRACT §3) ------------------------------------
+
+export type EventType =
+  | 'job.progress'
+  | 'job.completed'
+  | 'job.failed'
+  | 'analysis.ready'
+  | 'plan.ready'
+  | 'cases.ready'
+  | 'automation.ready'
+  | 'validation.ready'
+  | 'approval.updated'
+  | 'execution.step'
+  | 'execution.status'
+  | 'ci.status';
+
+export interface EventEnvelope<P = Record<string, unknown>> {
+  type: EventType;
+  correlationId: string;
+  projectId: string;
+  runId?: string;
+  jobId?: string;
+  seq: number;
+  ts: string;
+  payload: P;
+}
+
+export type ExecutionActionType =
+  | 'navigate'
+  | 'click'
+  | 'fill'
+  | 'select'
+  | 'upload'
+  | 'wait'
+  | 'assert'
+  | 'screenshot'
+  | 'error';
+
+export type StepStatus = 'running' | 'passed' | 'failed' | 'skipped';
+
+/** `execution.step` payload (V2_CONTRACT §3, FR-EXE-006/007/008). */
+export interface ExecutionStepPayload {
+  testCaseId: string;
+  testName: string;
+  sequence: number;
+  actionType: ExecutionActionType;
+  target: string;
+  valueSummary: string;
+  status: StepStatus;
+  currentUrl: string;
+  elapsedMs: number;
+  ts: string;
+  evidenceUri?: string;
+}
+
+/** `execution.status` payload. */
+export interface ExecutionStatusPayload {
+  status: ExecutionStatus;
+  [k: string]: unknown;
+}
+
+// ---- Entities (V2_CONTRACT §5) ---------------------------------------------
+
+export interface PublicUser {
+  id: string;
+  email: string;
+  role: Role;
+  name: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  baseUrl: string;
+  allowedDomains: string;
+  repository: string;
+  environment: string;
+  status: ProjectStatus;
+  llmModel: string;
+  llmTemperature: number;
+  runner: Runner;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowSummary {
+  documents: number;
+  requirements: number;
+  analyses: number;
+  testPlans: number;
+  approvedPlans: number;
+  testCases: number;
+  approvedCases: number;
+  artifacts: number;
+  executions: number;
+  pendingApprovals: number;
+}
+
+export type ProjectWithSummary = Project & { workflowSummary: WorkflowSummary };
+
+export interface SourceDocument {
+  id: string;
+  projectId: string;
+  filename: string;
+  category: DocumentCategory;
+  kind: string;
+  mimeType: string;
+  sizeBytes: number;
+  parseStatus: string;
+  message: string;
+  storagePath: string;
+  contentHash: string;
+  uploadedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentSegment {
+  id: string;
+  documentId: string;
+  sequence: number;
+  pageOrSheet: string;
+  rowOrSection: string;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  inclusionStatus: 'included' | 'excluded' | string;
+  createdAt: string;
+}
+
+export interface DocumentPreview {
+  document: SourceDocument;
+  segments: DocumentSegment[];
+}
+
+export interface Requirement {
+  id: string;
+  projectId: string;
+  source: string;
+  version: number;
+  title: string;
+  text: string;
+  acceptanceCriteria: string[] | null;
+  status: string;
+  sourceDocumentId: string | null;
+  contentHash: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Analysis {
+  id: string;
+  projectId: string;
+  requirementId: string | null;
+  generationRunId: string | null;
+  schemaVersion: string;
+  contentHash: string;
+  riskScore: number;
+  output: RequirementAnalysisOutput;
+  model: string;
+  temperature: number;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+/** RequirementAnalysisOutput (engine schema, FR-RA-*). Fields are best-effort. */
+export interface RequirementAnalysisOutput {
+  actors?: string[];
+  assumptions?: string[];
+  gaps?: string[];
+  clarificationQuestions?: string[];
+  clarification_questions?: string[];
+  riskScore?: number;
+  risk_score?: number;
+  riskRationale?: string;
+  summary?: string;
+  [k: string]: unknown;
+}
+
+export interface TestPlan {
+  id: string;
+  projectId: string;
+  generationRunId: string | null;
+  title: string;
+  version: number;
+  approvalStatus: ApprovalStatus;
+  approvalInvalidated: boolean;
+  schemaVersion: string;
+  contentHash: string;
+  sections: Record<string, unknown>;
+  model: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TestCase {
+  id: string;
+  projectId: string;
+  generationRunId: string | null;
+  requirementIds: string[] | null;
+  caseKey: string;
+  title: string;
+  objective: string;
+  category: string;
+  priority: string;
+  preconditions: string[] | null;
+  testData: Record<string, string> | null;
+  steps: string[] | null;
+  expectedResults: string[] | null;
+  automationSuitability: string;
+  source: string;
+  approvalStatus: ApprovalStatus;
+  approvalInvalidated: boolean;
+  automationStatus: string;
+  version: number;
+  schemaVersion: string;
+  contentHash: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Paginated<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface CoverageRequirement {
+  requirementId: string;
+  title: string;
+  testCaseCount: number;
+  approvedCount: number;
+  covered: boolean;
+}
+
+export interface Coverage {
+  totalRequirements: number;
+  coveredRequirements: number;
+  coveragePercent: number;
+  totalTestCases: number;
+  perRequirement: CoverageRequirement[];
+}
+
+export interface GeneratedArtifact {
+  id: string;
+  projectId: string;
+  generationRunId: string | null;
+  testCaseIds: string[] | null;
+  path: string;
+  kind: string;
+  content: string;
+  diff: string;
+  traceability: Record<string, unknown> | null;
+  contentHash: string;
+  version: number;
+  status: ArtifactStatus;
+  supersededById: string | null;
+  validationStatus: ValidationStatus;
+  validationReport: ValidationReport | null;
+  approvalStatus: ApprovalStatus;
+  approvalInvalidated: boolean;
+  schemaVersion: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ValidationFinding {
+  file?: string;
+  path?: string;
+  rule?: string;
+  severity?: string;
+  message?: string;
+  line?: number;
+  location?: string;
+  guidance?: string;
+  [k: string]: unknown;
+}
+
+export interface ValidationReport {
+  status?: ValidationStatus | string;
+  findings?: ValidationFinding[];
+  summary?: string;
+  [k: string]: unknown;
+}
+
+export interface ExecutionPlanStep {
+  sequence: number;
+  actionType: string;
+  target: string;
+  description: string;
+  expected: string;
+}
+
+export interface ExecutionPlan {
+  plans: Array<{ testCaseId: string; steps: ExecutionPlanStep[] }>;
+}
+
+export interface ExecutionRun {
+  id: string;
+  projectId: string;
+  mode: ExecutionMode;
+  status: ExecutionStatus;
+  environment: string;
+  browser: string;
+  headed: boolean;
+  automationIds: string[] | null;
+  testPaths: string[] | null;
+  metrics: Record<string, unknown> | null;
+  evidence: Record<string, unknown> | null;
+  ciRunId: string;
+  ciUrl: string;
+  correlationId: string;
+  report: Record<string, unknown> | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionEventRow {
+  id: string;
+  executionRunId: string;
+  projectId: string | null;
+  seq: number;
+  type: string;
+  testCaseId: string;
+  testName: string;
+  sequence: number;
+  actionType: string;
+  target: string;
+  valueSummary: string;
+  status: string;
+  currentUrl: string;
+  elapsedMs: number;
+  evidenceUri: string;
+  ts: string;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface TestResult {
+  id: string;
+  executionRunId: string;
+  testCaseId: string | null;
+  nodeId: string;
+  outcome: string;
+  durationSeconds: number;
+  errorMessage: string;
+  evidence: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface Finding {
+  id: string;
+  projectId: string;
+  executionRunId: string | null;
+  testResultId: string | null;
+  classification: FindingClassification;
+  confidence: number;
+  rationale: string;
+  severity: string;
+  overridden: boolean;
+  overrideReason: string;
+  defectDraft: Record<string, unknown> | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Approval {
+  id: string;
+  projectId: string;
+  resourceType: ApprovalResourceType;
+  resourceId: string;
+  resourceVersion: number;
+  decision: ApprovalDecision;
+  comment: string;
+  invalidated: boolean;
+  actorId: string | null;
+  actor: string;
+  createdAt: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  actor: string;
+  actorId: string | null;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  projectId: string | null;
+  result: string;
+  correlationId: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface Job {
+  id: string;
+  projectId: string;
+  type: JobType;
+  status: JobStatus;
+  progress: number;
+  correlationId: string;
+  idempotencyKey: string | null;
+  inputRefs: Record<string, unknown> | null;
+  resultRefs: Record<string, unknown> | null;
+  error: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 202 response returned by every async generate endpoint. */
+export interface JobAccepted {
+  jobId: string;
+  status: JobStatus;
+}
+
+export interface HealthStatus {
+  status: string;
+  api: string;
+  database: string;
+  engine: string;
+  ollama: string;
+}
+
+// ---- Request payloads ------------------------------------------------------
+
+export interface LoginResponse {
+  accessToken: string;
+  user: PublicUser;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  baseUrl?: string;
+  allowedDomains?: string;
+  repository?: string;
+  environment?: string;
+  llmModel?: string;
+  llmTemperature?: number;
+  runner?: Runner;
+}
+
+export type UpdateProjectInput = Partial<
+  CreateProjectInput & { status: ProjectStatus }
+>;
+
+export interface CreateExecutionInput {
+  projectId: string;
+  automationIds?: string[];
+  testPaths?: string[];
+  browser?: string;
+  headed?: boolean;
+  environment?: string;
+}
+
+/** Standard error contract (FR-BE-001). */
+export interface ApiError {
+  code: string;
+  message: string;
+  details?: unknown;
+  correlationId?: string;
+}

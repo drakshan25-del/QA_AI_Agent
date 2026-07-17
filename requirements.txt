@@ -1,5 +1,6 @@
 # Runtime dependencies for the Agentic AI QA System.
-# CI installs from this file (see .github/workflows/playwright-ci.yml).
+# CI installs from the reproducible pin file requirements-lock.txt
+# (regenerate with `.venv/bin/pip freeze > requirements-lock.txt`, §12.2).
 fastapi>=0.115
 uvicorn>=0.30
 pydantic>=2.7
@@ -10,6 +11,7 @@ langchain-ollama>=1.0
 langgraph>=1.0
 playwright>=1.45
 pytest>=8.0
+pytest-html>=4.0
 pytest-playwright>=0.5
 pypdf>=4.0
 python-docx>=1.1

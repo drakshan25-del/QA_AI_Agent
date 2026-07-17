@@ -1,0 +1,100 @@
+.step {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.step:last-child {
+  border-bottom: none;
+}
+.marker {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  color: #fff;
+}
+.m_running {
+  background: var(--running);
+}
+.m_passed {
+  background: var(--ok);
+}
+.m_failed {
+  background: var(--danger);
+}
+.m_skipped {
+  background: var(--neutral);
+}
+.stepLabel {
+  font-weight: 500;
+}
+.stepDetail {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.expandBtn {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.stepTime {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.testGroup {
+  margin-bottom: 14px;
+}
+.testGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.liveStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.liveStat {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.liveLabel {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.liveValue {
+  font-weight: 600;
+  margin-top: 2px;
+  word-break: break-all;
+}
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+.evidenceItem img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.mask {
+  color: var(--warn);
+}

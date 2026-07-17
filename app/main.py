@@ -19,6 +19,7 @@ from app.api import (
     approvals,
     automation,
     executions,
+    export,
     findings,
     generation,
     git_ci,
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
         git_ci.router,
         findings.router,
         reports.router,
+        export.router,
     ):
         _include_eagerly(app, router)
     return app

@@ -3,7 +3,9 @@
 Records an :class:`Approval` row for generated artifacts, test cases and test
 plans, updates the target's status, and writes an audit event per decision
 (FR-HITL-003). Rejected artifacts are blocked from execution and commits by
-the guards in the executions and git/ci routers (FR-HITL-001).
+the guards in the executions and git/ci routers (FR-HITL-001). A generated
+artifact can only be *approved* when its stored validation report passed
+(FR-VAL-005 / SEC-005) — the human gate never overrides the safety gate.
 """
 
 from __future__ import annotations
@@ -76,12 +78,26 @@ def approve_artifact(
 ) -> dict:
     """Approve/reject a generated artifact (FR-HITL-001/003).
 
-    Rejected artifacts cannot be executed or committed — the executions and
-    git routers enforce ``approval_status == 'approved'``.
+    Approval additionally requires a PASSING validation report (FR-VAL-005 /
+    SEC-005): an artifact whose ``validation_report`` is missing or has
+    ``passed=false`` cannot be approved (HTTP 409) — rejection and
+    regeneration remain allowed. Rejected artifacts cannot be executed or
+    committed — the executions and git routers enforce
+    ``approval_status == 'approved'``.
     """
     artifact = db.get(GeneratedArtifact, artifact_id)
     if artifact is None:
         raise HTTPException(status_code=404, detail=f"Artifact {artifact_id!r} not found.")
+    # SEC-005 / FR-VAL-005: the human gate must never override the safety
+    # gate — approval is only possible once validation has passed.
+    if body.decision == "approved" and not (artifact.validation_report or {}).get("passed"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Artifact {artifact_id!r} cannot be approved: its validation "
+            "report is missing or failing (FR-VAL-005/SEC-005). Re-run "
+            "POST /artifacts/{id}/validate and resolve the reported issues "
+            "first; rejection remains allowed.",
+        )
     approval = _apply_decision(
         db,
         body,

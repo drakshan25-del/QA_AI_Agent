@@ -182,8 +182,10 @@ def _narrative_section(data: dict) -> dict:
     }
     try:
         return {"label": AI_NARRATIVE_LABEL, "text": report_agent.summarise_run(run_summary)}
-    except OllamaUnavailableError as exc:
-        logger.warning("narrative fallback (Ollama unavailable): %s", exc)
+    except (OllamaUnavailableError, RuntimeError) as exc:
+        # RuntimeError = structured output still failing after bounded retries;
+        # the report must still be produced deterministically (NFR-REL-001).
+        logger.warning("narrative fallback (LLM unusable): %s", exc)
         text = (
             f"Run {run_summary['run_id']} on environment "
             f"'{run_summary['environment']}' finished with status "

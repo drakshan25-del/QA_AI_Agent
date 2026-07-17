@@ -1,54 +1,34 @@
-import pytest
-from playwright.sync_api import Page, expect
+"""KeepMe Control Centre staging login tests.
 
-from automation.pages.sample_login_page import SampleLoginPage
+AI-generated draft (run 6a0852f0), corrected by the human reviewer at the
+FR-HITL-001 gate: the draft imported the sample-app page object and asserted
+sample-app behaviour; corrected to KeepmeLoginPage and the behaviour observed
+on staging (success navigates away from /login; failure stays and shows an
+'Invalid Credentials' toast). Recorded as human correction effort (§15.2).
+"""
+
+import pytest
+from playwright.sync_api import Page
+
+from automation.pages.keepme_login_page import KeepmeLoginPage
 
 pytestmark = [pytest.mark.generated]
 
-# TC: TC-001 User logs in with valid credentials
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_valid_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
+
+# TC: TC-001 Valid credentials - Successful login
+# REQ: 6eec0e7bcad64662be9983c7c5af8c89
+def test_successful_login(page: Page, base_url: str, credentials, target_available) -> None:
+    login = KeepmeLoginPage(page, base_url)
     login.goto()
     login.login(credentials.username, credentials.password)
-    expect(login.flash).to_contain_text('Welcome')
+    login.assert_left_login()
 
-# TC: TC-002 User logs in with incorrect password
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_incorrect_password_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
-    login.goto()
-    login.login(credentials.username, 'incorrect_password')
-    expect(login.flash).to_contain_text('Invalid credentials')
 
-# TC-003 User logs in with unknown username
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_unknown_username_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
+# TC: TC-003 Invalid password - Login failure
+# REQ: 6eec0e7bcad64662be9983c7c5af8c89
+def test_invalid_password_login_failure(page: Page, base_url: str, credentials, target_available) -> None:
+    login = KeepmeLoginPage(page, base_url)
     login.goto()
-    login.login('unknown_username', credentials.password)
-    expect(login.flash).to_contain_text('Invalid credentials')
-
-# TC-004 User logs in with empty username
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_empty_username_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
-    login.goto()
-    login.login('', credentials.password)
-    expect(login.flash).to_contain_text('Invalid credentials')
-
-# TC-005 User logs in with empty password
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_empty_password_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
-    login.goto()
-    login.login(credentials.username, '')
-    expect(login.flash).to_contain_text('Invalid credentials')
-
-# TC-006 User logs in with empty username and password
-# REQ: 709de708956c4e58ab7257c74c862b56
-def test_empty_username_password_login(page: Page, base_url: str, credentials, target_available):
-    login = SampleLoginPage(page, base_url)
-    login.goto()
-    login.login('', '')
-    expect(login.flash).to_contain_text('Invalid credentials')
+    login.login(credentials.username, "not-the-real-password")
+    login.assert_alert_contains("Invalid Credentials")
+    login.assert_still_on_login()

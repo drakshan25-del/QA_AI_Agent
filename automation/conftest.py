@@ -15,17 +15,84 @@ Fixtures exposed to every test under ``automation/``:
 * ``target_available`` — pings ``base_url`` once per session (httpx, 2 s
   timeout) and skips requesting tests when the target app is not running, so
   suites stay green without services.
+* ``_domain_allowlist_guard`` (autouse) — runtime enforcement of the domain
+  allow-list (SEC-003, complements the static FR-VAL-004 check): every
+  browser test's Playwright context gets a route that aborts requests whose
+  host is not on ``QA_ALLOWED_DOMAINS`` (exact or dot-suffix match). An
+  empty/unset variable falls back to ``localhost,127.0.0.1`` — never
+  allow-all.
+
+This module stays dependency-light (stdlib + httpx + pytest only) so the
+automation tree remains standalone in CI.
 """
 
 from __future__ import annotations
 
 import os
 from typing import NamedTuple
+from urllib.parse import urlparse
 
 import httpx
 import pytest
 
 DEFAULT_BASE_URL = "http://localhost:8001"
+
+#: Fallback for the runtime domain allow-list (SEC-003). An empty or unset
+#: QA_ALLOWED_DOMAINS must never mean "allow everything".
+DEFAULT_ALLOWED_DOMAINS = "localhost,127.0.0.1"
+
+
+def _allowed_domains(raw: str | None) -> list[str]:
+    """Parse a ``QA_ALLOWED_DOMAINS`` value into a domain list (SEC-003).
+
+    Empty or unset input falls back to :data:`DEFAULT_ALLOWED_DOMAINS` — the
+    guard never degrades to allow-all.
+    """
+    entries = [d.strip() for d in (raw or "").split(",") if d.strip()]
+    return entries or DEFAULT_ALLOWED_DOMAINS.split(",")
+
+
+def _host_allowed(url: str, domains: list[str]) -> bool:
+    """True iff ``url``'s host is on the allow-list (SEC-003). Pure function.
+
+    A host matches an entry on exact equality or as a subdomain (dot-suffix):
+    ``example.com`` allows ``example.com`` and ``app.example.com`` but never
+    ``notexample.com``. URLs without a parseable host, and empty allow-lists,
+    are refused — the guard fails closed.
+    """
+    host = (urlparse(url).hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return False
+    for entry in domains:
+        domain = entry.strip().lower().lstrip(".").rstrip(".")
+        if domain and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
+
+
+@pytest.fixture(autouse=True)
+def _domain_allowlist_guard(request: pytest.FixtureRequest) -> None:
+    """Enforce the domain allow-list at runtime for every browser test (SEC-003).
+
+    Wraps pytest-playwright's ``context`` fixture with a catch-all route that
+    aborts any request whose host is not allowed by ``QA_ALLOWED_DOMAINS``
+    (injected into the pytest subprocess by the execution service). The static
+    validation gate checks generated code; this closes the runtime hole —
+    redirects, scripts or dynamically built URLs can no longer reach
+    non-allow-listed hosts.
+    """
+    if "context" not in request.fixturenames:
+        return  # not a browser test: nothing to guard
+    context = request.getfixturevalue("context")
+    domains = _allowed_domains(os.environ.get("QA_ALLOWED_DOMAINS"))
+
+    def _enforce(route, intercepted_request) -> None:
+        if _host_allowed(intercepted_request.url, domains):
+            route.continue_()
+        else:
+            route.abort("blockedbyclient")
+
+    context.route("**/*", _enforce)
 
 
 class Credentials(NamedTuple):

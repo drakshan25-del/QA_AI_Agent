@@ -1,0 +1,55 @@
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--surface);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.dropzone:hover,
+.dropzoneActive {
+  border-color: var(--primary);
+  background: var(--info-bg);
+}
+.dropIcon {
+  font-size: 26px;
+  color: var(--primary);
+}
+.dropTitle {
+  font-weight: 600;
+  margin-top: 6px;
+}
+.dropHint {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.queueItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.queueItem:last-child {
+  border-bottom: none;
+}
+.fileName {
+  font-weight: 600;
+  word-break: break-all;
+}
+.fileMeta {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.itemControls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.progressCell {
+  grid-column: 1 / -1;
+}

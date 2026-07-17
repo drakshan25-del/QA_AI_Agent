@@ -137,6 +137,8 @@ def generate_test_cases(
     requirement: dict,
     analysis: dict | None,
     min_cases: int = 10,
+    model: str | None = None,
+    temperature: float | None = None,
 ) -> TestCasesOutput:
     """Generate structured test cases for one requirement (FR-TC-001..003).
 
@@ -145,6 +147,10 @@ def generate_test_cases(
         analysis: Serialised ``RequirementAnalysisOutput`` dict, or ``None``.
         min_cases: Minimum number of cases requested from the model; attempts
             returning fewer are retried and the largest valid set is kept.
+        model: Optional per-project model override (FR-PROJ-003); ``None``
+            falls back to the global settings model.
+        temperature: Optional per-project temperature override (FR-PROJ-003);
+            ``None`` falls back to the global settings temperature.
 
     Returns:
         A validated ``TestCasesOutput`` whose cases have unique TC-### keys,
@@ -156,10 +162,11 @@ def generate_test_cases(
             output within ``llm_max_retries`` retries (never returns
             unvalidated text).
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
+    effective_model = model or settings.llm_model
     requirement_id = str(requirement.get("id", "") or "")
-    model = get_chat_model().with_structured_output(TestCasesOutput)
+    chat = get_chat_model(model, temperature).with_structured_output(TestCasesOutput)
     messages = [
         ("system", SYSTEM_PROMPT),
         ("human", _build_user_prompt(requirement, analysis, min_cases)),
@@ -171,7 +178,7 @@ def generate_test_cases(
     for attempt in range(1, attempts + 1):
         started = time.perf_counter()
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             elapsed = time.perf_counter() - started
             if not isinstance(result, TestCasesOutput) or not result.test_cases:
                 raise ValueError("model returned no valid test cases")
@@ -203,7 +210,7 @@ def generate_test_cases(
     if best is None:
         raise RuntimeError(
             f"Test case generation failed to produce a valid structured output "
-            f"after {attempts} attempts (model={settings.llm_model}, "
+            f"after {attempts} attempts (model={effective_model}, "
             f"prompt={PROMPT_VERSION}). Last error: {last_error}"
         ) from last_error
     if len(best.test_cases) < min_cases:

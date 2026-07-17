@@ -1,0 +1,295 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import { Readable } from 'stream';
+import { AppConfig } from '../config/configuration';
+import { CORRELATION_HEADER } from '../common/correlation';
+import { EngineException } from '../common/errors';
+import { redact } from '../common/redact';
+
+/** One parsed SSE event from the engine run stream. */
+export interface EngineSseEvent {
+  seq: number;
+  type: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Typed client for the engine's `/internal/v1/*` contract (V2_CONTRACT §4).
+ * Adds the static `X-Engine-Token` (server-side only, never exposed to the
+ * browser, FR-CI-004), the `X-Correlation-Id` (FR-ENG-003) and, on job
+ * submits, the `Idempotency-Key` (FR-BE-003).
+ */
+@Injectable()
+export class EngineClient {
+  private readonly logger = new Logger(EngineClient.name);
+  private readonly http: AxiosInstance;
+  private readonly baseUrl: string;
+  private readonly token: string;
+
+  constructor(private readonly config: ConfigService) {
+    const engine = this.config.get<AppConfig['engine']>('engine')!;
+    this.baseUrl = engine.url.replace(/\/$/, '');
+    this.token = engine.token;
+    this.http = axios.create({
+      baseURL: `${this.baseUrl}/internal/v1`,
+      timeout: 120_000,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  private headers(correlationId?: string, idempotencyKey?: string) {
+    const h: Record<string, string> = { 'X-Engine-Token': this.token };
+    if (correlationId) h[CORRELATION_HEADER] = correlationId;
+    if (idempotencyKey) h['Idempotency-Key'] = idempotencyKey;
+    return h;
+  }
+
+  private async post<T>(
+    path: string,
+    body: unknown,
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<T> {
+    try {
+      const res = await this.http.post<T>(path, body, {
+        headers: this.headers(correlationId, idempotencyKey),
+      });
+      return res.data;
+    } catch (err) {
+      throw this.wrap(err, `POST ${path}`);
+    }
+  }
+
+  private wrap(err: unknown, ctx: string): EngineException {
+    const ax = err as AxiosError;
+    const detail = (ax.response?.data as Record<string, unknown>) ?? {
+      message: ax.message,
+    };
+    this.logger.error(`${ctx} failed: ${ax.message}`, undefined);
+    return new EngineException(
+      `Engine call failed (${ctx}): ${ax.message}`,
+      redact(detail),
+    );
+  }
+
+  // --- health -------------------------------------------------------------
+  async health(): Promise<Record<string, unknown>> {
+    const res = await this.http.get('/health', { headers: this.headers() });
+    return res.data as Record<string, unknown>;
+  }
+
+  // --- document parsing (FR-IN-002/008) -----------------------------------
+  async parse(
+    files: { filename: string; category: string; contentBase64: string }[],
+    correlationId?: string,
+  ): Promise<{ documents: EngineParsedDocument[]; schema_version?: string }> {
+    return this.post('/parse', { files }, correlationId);
+  }
+
+  // --- agents -------------------------------------------------------------
+  async analyse(
+    body: {
+      requirementId?: string;
+      text: string;
+      acceptanceCriteria?: string[];
+      model?: string;
+      temperature?: number;
+    },
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/analyse', body, correlationId, idempotencyKey);
+  }
+
+  async testPlan(
+    body: {
+      projectName: string;
+      baseUrl?: string;
+      requirements?: unknown[];
+      analyses?: unknown[];
+      model?: string;
+      temperature?: number;
+    },
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/test-plan', body, correlationId, idempotencyKey);
+  }
+
+  async testCases(
+    body: {
+      requirement: unknown;
+      analysis?: unknown;
+      minCases?: number;
+      model?: string;
+      temperature?: number;
+    },
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/test-cases', body, correlationId, idempotencyKey);
+  }
+
+  async automation(
+    body: {
+      testCases: unknown[];
+      baseUrl?: string;
+      pageObjectsSummary?: string;
+      model?: string;
+      temperature?: number;
+    },
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/automation', body, correlationId, idempotencyKey);
+  }
+
+  // --- validation / plan --------------------------------------------------
+  async validate(
+    body: {
+      files: { path: string; content: string }[];
+      allowedDomains?: string[];
+      runCollection?: boolean;
+    },
+    correlationId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/validate', body, correlationId);
+  }
+
+  async executionPlan(
+    body: { testCases: unknown[]; baseUrl?: string },
+    correlationId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/execution-plan', body, correlationId);
+  }
+
+  // --- classification / report --------------------------------------------
+  async classify(
+    body: { test: unknown; context?: unknown; model?: string; temperature?: number },
+    correlationId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/classify', body, correlationId);
+  }
+
+  async report(
+    body: { data: Record<string, unknown> },
+    correlationId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.post('/report', body, correlationId);
+  }
+
+  // --- execution ----------------------------------------------------------
+  async execute(
+    body: {
+      runId: string;
+      files?: string[];
+      testPaths?: string[];
+      browser?: string;
+      headed?: boolean;
+      environment?: string;
+      allowedDomains?: string;
+      targetBaseUrl?: string;
+      markers?: string;
+    },
+    correlationId?: string,
+    idempotencyKey?: string,
+  ): Promise<{ runId: string; status: string; eventsUrl: string }> {
+    return this.post('/execute', body, correlationId, idempotencyKey);
+  }
+
+  async cancelExecution(
+    runId: string,
+    correlationId?: string,
+  ): Promise<{ runId: string; cancelled: boolean }> {
+    return this.post(
+      `/executions/${encodeURIComponent(runId)}/cancel`,
+      {},
+      correlationId,
+    );
+  }
+
+  /**
+   * Opens the engine SSE stream `GET /internal/v1/runs/{runId}/events`, parses
+   * envelopes and invokes `onEvent` for each. Resolves when the stream ends.
+   * Returns nothing; caller supplies an AbortSignal to stop early.
+   */
+  async streamRunEvents(
+    runId: string,
+    onEvent: (event: EngineSseEvent) => void | Promise<void>,
+    opts: { fromSeq?: number; correlationId?: string; signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const url = `/runs/${encodeURIComponent(runId)}/events`;
+    const res = await this.http.get(url, {
+      params: { from_seq: opts.fromSeq ?? 0 },
+      headers: this.headers(opts.correlationId),
+      responseType: 'stream',
+      signal: opts.signal,
+      timeout: 0,
+    });
+
+    const stream = res.data as Readable;
+    let buffer = '';
+
+    await new Promise<void>((resolve, reject) => {
+      const onData = (chunk: Buffer) => {
+        buffer += chunk.toString('utf8');
+        let idx: number;
+        // SSE frames are separated by a blank line.
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const parsed = parseSseFrame(frame);
+          if (parsed) void onEvent(parsed);
+        }
+      };
+      stream.on('data', onData);
+      stream.on('end', () => resolve());
+      stream.on('error', (e: Error) => reject(e));
+      if (opts.signal) {
+        opts.signal.addEventListener('abort', () => {
+          stream.destroy();
+          resolve();
+        });
+      }
+    });
+  }
+}
+
+export interface EngineParsedDocument {
+  filename: string;
+  category: string;
+  kind: string;
+  text?: string;
+  segments: {
+    page_or_sheet: string;
+    row_or_section: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+    inclusion_status?: string;
+  }[];
+  parse_status: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+}
+
+function parseSseFrame(frame: string): EngineSseEvent | null {
+  let seq = 0;
+  let type = 'message';
+  const dataLines: string[] = [];
+  for (const raw of frame.split('\n')) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('id:')) seq = parseInt(line.slice(3).trim(), 10) || 0;
+    else if (line.startsWith('event:')) type = line.slice(6).trim();
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+  }
+  if (!dataLines.length) return null;
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(dataLines.join('\n'));
+  } catch {
+    payload = { raw: dataLines.join('\n') };
+  }
+  return { seq, type, payload };
+}

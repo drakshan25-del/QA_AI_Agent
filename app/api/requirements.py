@@ -21,9 +21,36 @@ from app.services.ingestion import (
     create_requirement_from_text,
     ingest_file,
 )
-from tools.file_ingestion import IngestionError
+from tools.file_ingestion import MAX_FILE_SIZE_BYTES, IngestionError
 
 router = APIRouter(tags=["requirements"])
+
+#: Upload bodies are read in chunks of this size so an oversize file is
+#: refused with 413 before it is ever fully buffered in memory (SEC-011).
+_UPLOAD_CHUNK_BYTES = 1024 * 1024  # ~1 MB
+
+
+async def _read_upload_limited(file: UploadFile) -> bytes:
+    """Read an :class:`UploadFile` in ~1 MB chunks up to the ingestion limit.
+
+    Raises HTTP 413 the moment the accumulated size exceeds
+    ``tools.file_ingestion.MAX_FILE_SIZE_BYTES`` — the whole body is never
+    held in memory for an oversize upload (SEC-011).
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+        total += len(chunk)
+        if total > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"'{file.filename}' exceeds the "
+                f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB upload limit "
+                "(SEC-011). Please split the document or remove embedded "
+                "images and retry.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _get_project_or_404(db: Session, project_id: str) -> Project:
@@ -81,7 +108,7 @@ async def upload_requirements(
     _get_project_or_404(db, project_id)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Uploaded file has no filename.")
-    data = await file.read()
+    data = await _read_upload_limited(file)  # 413 on oversize, SEC-011
     try:
         created = ingest_file(db, project_id, file.filename, data)
     except DuplicateRequirementError as exc:
