@@ -157,6 +157,7 @@ export type EventType =
   | 'approval.updated'
   | 'execution.step'
   | 'execution.status'
+  | 'execution.log'
   | 'notification.new'
   | 'ci.status';
 
@@ -203,6 +204,46 @@ export interface ExecutionStepPayload {
 export interface ExecutionStatusPayload {
   status: ExecutionStatus;
   [k: string]: unknown;
+}
+
+/** Real-time execution log levels (each maps to its own colour in the UI). */
+export type ExecutionLogLevel =
+  | 'debug'
+  | 'info'
+  | 'warning'
+  | 'error'
+  | 'success'
+  | 'pass'
+  | 'fail';
+
+/** `execution.log` payload — one live, CI-style log line. */
+export interface ExecutionLogPayload {
+  runId: string;
+  seq: number;
+  level: ExecutionLogLevel;
+  stage: string;
+  message: string;
+  progress: number | null;
+  testCaseId?: string;
+  testName?: string;
+  meta?: Record<string, unknown>;
+  ts: string;
+}
+
+/** Persisted execution log row returned by GET /executions/:id/logs. */
+export interface ExecutionLogRow {
+  id: string;
+  executionRunId: string;
+  projectId: string;
+  seq: number;
+  level: ExecutionLogLevel;
+  stage: string;
+  message: string;
+  progress: number | null;
+  testCaseId: string;
+  testName: string;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 // ---- Entities (V2_CONTRACT §5) ---------------------------------------------

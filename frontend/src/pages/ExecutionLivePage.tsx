@@ -14,6 +14,7 @@ import {
   EvidencePanel,
   type TimelineFilter,
 } from '../features/executions/Timeline';
+import { ExecutionLogConsole } from '../features/executions/ExecutionLogConsole';
 import { useExecutionEvents } from '../features/executions/useExecutionEvents';
 import { executionsApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
@@ -190,6 +191,13 @@ export function ExecutionLivePage(): JSX.Element {
             the QA engine, not inside this web page (FR-V3-EXE-014).
           </Banner>
         )}
+      </Card>
+
+      <Card
+        title="Execution logs"
+        subtitle="Live, CI-style log stream for the whole run — searchable, filterable, downloadable"
+      >
+        <ExecutionLogConsole runId={id} projectId={run?.projectId} live={isActive} />
       </Card>
 
       <Card

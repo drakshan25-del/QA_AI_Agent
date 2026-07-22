@@ -117,6 +117,35 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: D401
         time.sleep(0.05)
 
 
+def pytest_collection_finish(session):  # noqa: D401
+    """Emit the number of collected tests so the live log can show an accurate
+    total ("Found N test cases", "Running test 5 of 28"). The count travels in
+    ``sequence``; the backend maps ``action_type == "collected"`` to a total."""
+    try:
+        count = len(session.items)
+    except Exception:  # pragma: no cover - defensive: never break collection
+        return
+    if not _SINK:
+        return
+    body = {
+        "type": "execution.step",
+        "payload": {
+            "run_id": _RUN_ID,
+            "action_type": "collected",
+            "target": str(count),
+            "sequence": count,
+            "status": "passed",
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "elapsed_ms": int((time.time() - _T0["t"]) * 1000),
+        },
+    }
+    _ensure_sender()
+    try:
+        _QUEUE.put_nowait(body)
+    except queue.Full:  # pragma: no cover
+        pass
+
+
 def pytest_runtest_logstart(nodeid, location):  # noqa: D401
     emit_step("test", target=nodeid, status="running", test_name=nodeid)
 

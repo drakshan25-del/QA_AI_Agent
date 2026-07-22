@@ -64,6 +64,20 @@ export class ExecutionsController {
     return this.executions.getResults(id, user);
   }
 
+  /** Real-time execution log replay (live console seed + reconnect gap). */
+  @Get(':id/logs')
+  async logs(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Query('fromSeq') fromSeq?: string,
+  ) {
+    return this.executions.getLogs(
+      id,
+      user,
+      fromSeq ? parseInt(fromSeq, 10) : 0,
+    );
+  }
+
   /** Stop control (FR-V3-EXE-008). */
   @Post(':id/cancel')
   @RequirePermission('execution.control')

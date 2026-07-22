@@ -14,6 +14,7 @@ import type {
   CreateProjectInput,
   DocumentPreview,
   ExecutionEventRow,
+  ExecutionLogRow,
   ExecutionPlan,
   ExecutionRun,
   JobLogEntry,
@@ -406,6 +407,13 @@ export const executionsApi = {
   },
   async events(id: string, fromSeq = 0): Promise<ExecutionEventRow[]> {
     const { data } = await http.get<ExecutionEventRow[]>(`/executions/${id}/events`, {
+      params: { fromSeq },
+    });
+    return data;
+  },
+  /** Real-time execution log replay (console seed + reconnect gap). */
+  async logs(id: string, fromSeq = 0): Promise<ExecutionLogRow[]> {
+    const { data } = await http.get<ExecutionLogRow[]>(`/executions/${id}/logs`, {
       params: { fromSeq },
     });
     return data;

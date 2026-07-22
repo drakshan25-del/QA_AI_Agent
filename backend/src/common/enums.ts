@@ -176,6 +176,42 @@ export type ApprovalResourceType = (typeof APPROVAL_RESOURCE_TYPES)[number];
 export const LOG_SEVERITIES = ['info', 'success', 'warning', 'error'] as const;
 export type LogSeverity = (typeof LOG_SEVERITIES)[number];
 
+/**
+ * Execution log levels (§ real-time execution logging). A superset of
+ * LogSeverity that adds developer-oriented `debug` and the test-outcome
+ * levels `pass`/`fail`, so the live execution console reads like a CI system
+ * (Jenkins/GitHub Actions). Each level maps to its own colour in the UI.
+ */
+export const EXECUTION_LOG_LEVELS = [
+  'debug',
+  'info',
+  'warning',
+  'error',
+  'success',
+  'pass',
+  'fail',
+] as const;
+export type ExecutionLogLevel = (typeof EXECUTION_LOG_LEVELS)[number];
+
+/**
+ * Ordered execution lifecycle stages shown in the live log console. Stored as
+ * human-readable labels so both the backend logs and the UI use one vocabulary.
+ */
+export const EXECUTION_STAGES = [
+  'Initializing',
+  'Preparing Execution',
+  'Loading Configuration',
+  'Discovering Tests',
+  'Launching Browser',
+  'Running Tests',
+  'Capturing Evidence',
+  'Generating Reports',
+  'Uploading Results',
+  'Completed',
+  'Failed',
+] as const;
+export type ExecutionStage = (typeof EXECUTION_STAGES)[number];
+
 /** In-app notification types (FR-V3-ENT-007). */
 export const NOTIFICATION_TYPES = [
   'job.completed',
@@ -201,5 +237,6 @@ export type EventType =
   | 'approval.updated'
   | 'execution.step'
   | 'execution.status'
+  | 'execution.log'
   | 'notification.new'
   | 'ci.status';

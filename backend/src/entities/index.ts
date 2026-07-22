@@ -16,6 +16,7 @@ import { Finding } from './finding.entity';
 import { Approval } from './approval.entity';
 import { AuditEvent } from './audit-event.entity';
 import { ExecutionEvent } from './execution-event.entity';
+import { ExecutionLogEntry } from './execution-log-entry.entity';
 import { Job } from './job.entity';
 import { JobLogEntry } from './job-log-entry.entity';
 import { Notification } from './notification.entity';
@@ -41,6 +42,7 @@ export const ALL_ENTITIES = [
   Approval,
   AuditEvent,
   ExecutionEvent,
+  ExecutionLogEntry,
   Job,
   JobLogEntry,
   Notification,
@@ -67,6 +69,7 @@ export {
   Approval,
   AuditEvent,
   ExecutionEvent,
+  ExecutionLogEntry,
   Job,
   JobLogEntry,
   Notification,

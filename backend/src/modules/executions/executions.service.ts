@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Not, Repository } from 'typeorm';
 import {
   ExecutionEvent,
+  ExecutionLogEntry,
   ExecutionRun,
   GeneratedArtifact,
   Project,
@@ -29,6 +30,39 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient, EngineSseEvent } from '../../engine/engine.client';
 import { CreateExecutionDto, ExecutionSettingsDto } from './dto/execution.dto';
+import {
+  ExecutionLoggerService,
+  ScopedExecutionLogger,
+} from './execution-logger.service';
+
+/** Per-run streaming state used to derive human log lines + progress. */
+interface RunStreamState {
+  /** Total tests to run (files up front; exact count once pytest collects). */
+  total: number;
+  completed: number;
+  started: number;
+  /** Run-elapsed (ms) when each test started, to derive per-test duration. */
+  testStart: Map<string, number>;
+  /** Most recent error text seen for a test, used as its failure reason. */
+  lastError: Map<string, string>;
+  /** True once the engine has reported its collected test count. */
+  collected: boolean;
+}
+
+function browserLabel(b: string): string {
+  if (b === 'chromium') return 'Chrome (Chromium)';
+  if (b === 'firefox') return 'Firefox';
+  if (b === 'webkit') return 'Safari (WebKit)';
+  return b || 'chromium';
+}
+
+/** Readable test name from a pytest node id (path::Class::test → "test"). */
+function prettyTest(nodeId: string): string {
+  if (!nodeId) return 'test';
+  const parts = nodeId.split('::');
+  if (parts.length > 1) return parts.slice(1).join(' › ');
+  return nodeId.split('/').pop() || nodeId;
+}
 
 /** Effective run settings persisted with the run (FR-V3-EXE-011). */
 export interface EffectiveSettings {
@@ -49,6 +83,10 @@ export class ExecutionsService {
   /** Serialises pump passes so two concurrent pumps can never dispatch the
    * same queued run or under-count `activeRuns` (FR-V3-EXE-012). */
   private pumpChain: Promise<void> = Promise.resolve();
+  /** Stage-aware log stream per active run (real-time execution logs). */
+  private readonly runLoggers = new Map<string, ScopedExecutionLogger>();
+  /** Derived progress/duration state per active run. */
+  private readonly runStreams = new Map<string, RunStreamState>();
 
   constructor(
     @InjectRepository(ExecutionRun)
@@ -66,7 +104,32 @@ export class ExecutionsService {
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
     private readonly engine: EngineClient,
+    private readonly execLog: ExecutionLoggerService,
   ) {}
+
+  /** Stage-aware logger bound to a run (cached so the stage persists across
+   * create → start → stream → finalize). */
+  private log(
+    run: { id: string; projectId: string },
+    correlationId?: string,
+  ): ScopedExecutionLogger {
+    let l = this.runLoggers.get(run.id);
+    if (!l) {
+      l = this.execLog.forRun({
+        runId: run.id,
+        projectId: run.projectId,
+        correlationId,
+      });
+      this.runLoggers.set(run.id, l);
+    }
+    return l;
+  }
+
+  private forgetRun(runId: string): void {
+    this.runLoggers.delete(runId);
+    this.runStreams.delete(runId);
+    this.execLog.release(runId);
+  }
 
   private get limits(): AppConfig['execution'] {
     return (
@@ -286,9 +349,29 @@ export class ExecutionsService {
       },
     });
 
-    this.emitStatus(run, correlationId, {
-      queued_position: await this.queuedPosition(run.id),
+    const position = await this.queuedPosition(run.id);
+    this.emitStatus(run, correlationId, { queued_position: position });
+
+    // Opening lines of the live execution log (real-time execution logs).
+    const log = this.log(run, correlationId);
+    await log.stage(
+      'Initializing',
+      restartOfRunId
+        ? `Restarting execution (new run ${run.id.slice(0, 8)}, same configuration).`
+        : 'Execution request accepted.',
+    );
+    await log.info(`Browser: ${browserLabel(run.browser)}`);
+    await log.info(`Mode: ${run.headed ? 'Headed (visible browser)' : 'Headless'}`);
+    await log.info(`Scope: ${scope} · Environment: ${run.environment}`);
+    await log.info(`Test targets: ${testPaths.length} file(s).`, {
+      meta: { testPaths },
     });
+    await log.info(
+      position > 1
+        ? `Queued at position ${position} — waiting for an available runner slot.`
+        : 'Queued — starting as soon as a runner slot is free.',
+      { progress: 0 },
+    );
 
     // Queue + concurrency limit (FR-V3-EXE-012): the run starts immediately
     // when a slot is free, otherwise stays Queued until one frees up.
@@ -429,6 +512,18 @@ export class ExecutionsService {
       });
       await this.setStatus(run, 'preparing', correlationId);
 
+      const log = this.log(run, correlationId);
+      const settings0 = (run.settings ?? {}) as unknown as EffectiveSettings;
+      await log.stage('Preparing Execution', 'Starting execution…');
+      await log.stage('Loading Configuration', 'Reading execution configuration…');
+      await log.info(
+        `Settings: timeout ${settings0.timeoutSeconds}s · retries ${settings0.retries} · ` +
+          `workers ${settings0.workers}` +
+          (settings0.slowMoMs ? ` · slow-mo ${settings0.slowMoMs}ms` : '') +
+          ` · screenshots ${settings0.screenshotMode}` +
+          (settings0.video ? ' · video on' : ''),
+      );
+
       // The DB is the artefact store — materialise the approved generated
       // files into the engine workspace with the run submission, otherwise
       // pytest is pointed at paths that exist nowhere on disk (AIQA-EXEC-001).
@@ -451,6 +546,27 @@ export class ExecutionsService {
         await this.artifacts.find({
           where: { projectId: run.projectId, status: 'active', kind: 'page_object' },
         }),
+      );
+      await log.info(`Prepared ${files.length} automation file(s) for the runner.`);
+
+      await log.stage('Discovering Tests', 'Discovering Playwright test files…');
+      await log.info(`Found ${run.testPaths?.length ?? 0} test file(s).`, {
+        meta: { testPaths: run.testPaths ?? [] },
+      });
+
+      // Seed the derived progress/duration state for this run's stream.
+      this.runStreams.set(run.id, {
+        total: run.testPaths?.length ?? 0,
+        completed: 0,
+        started: 0,
+        testStart: new Map(),
+        lastError: new Map(),
+        collected: false,
+      });
+
+      await log.stage(
+        'Launching Browser',
+        `Launching ${browserLabel(run.browser)} (${run.headed ? 'headed' : 'headless'})…`,
       );
 
       const settings = (run.settings ?? {}) as unknown as EffectiveSettings;
@@ -478,6 +594,7 @@ export class ExecutionsService {
 
       run.startedAt = new Date();
       await this.setStatus(run, 'running', correlationId);
+      await log.stage('Running Tests', 'Runner started — executing tests…');
       await this.consumeStream(
         run.id,
         run.projectId,
@@ -488,6 +605,11 @@ export class ExecutionsService {
       this.logger.error(
         `run ${run.id} failed to start: ${(err as Error).message}`,
       );
+      const log = this.log(run, correlationId);
+      log.setStage('Failed');
+      await log.error(`Execution failed to start: ${(err as Error).message}`, {
+        meta: { stack: (err as Error).stack },
+      });
       const fresh = await this.runs.findOne({ where: { id: run.id } });
       if (fresh && !isTerminalExecutionStatus(fresh.status)) {
         fresh.metrics = { error: (err as Error).message };
@@ -498,6 +620,7 @@ export class ExecutionsService {
           error: (err as Error).message,
         });
       }
+      this.forgetRun(run.id);
       this.activeRuns.delete(run.id);
       void this.pump(correlationId);
     }
@@ -586,6 +709,9 @@ export class ExecutionsService {
         );
       }
 
+      // Translate raw telemetry into human, CI-style log lines.
+      await this.logEngineEvent(runId, projectId, type, payload, correlationId);
+
       if (type === 'execution.status') {
         await this.onStatusEvent(runId, payload, correlationId);
       }
@@ -606,6 +732,111 @@ export class ExecutionsService {
       await this.finalize(runId, testOutcomes, correlationId);
       this.activeRuns.delete(runId);
       void this.pump(correlationId);
+    }
+  }
+
+  /**
+   * Turn one raw engine event (step/status telemetry) into a readable,
+   * CI-style log line. Test-level pass/fail/skip, collection count, runtime
+   * errors and progress are surfaced; noisy per-action steps are left to the
+   * timeline. Terminal run status is logged once in `finalize`, not here, to
+   * avoid duplicate "completed/failed" lines.
+   */
+  private async logEngineEvent(
+    runId: string,
+    projectId: string,
+    type: string,
+    payload: Record<string, unknown>,
+    correlationId?: string,
+  ): Promise<void> {
+    const log = this.log({ id: runId, projectId }, correlationId);
+    const state = this.runStreams.get(runId);
+    const pct = (): number | null => {
+      if (!state || state.total <= 0) return null;
+      return Math.max(0, Math.min(100, Math.round((state.completed / state.total) * 100)));
+    };
+
+    if (type === 'execution.status') {
+      // Non-terminal detail (e.g. "materialised N generated file(s)").
+      const status = String(payload.status || '');
+      if (['preparing', 'running'].includes(status) && payload.detail) {
+        await log.debug(String(payload.detail));
+      }
+      return;
+    }
+    if (type !== 'execution.step') return;
+
+    const action = String(payload.action_type || '');
+    const status = String(payload.status || '');
+    const name = prettyTest(String(payload.test_name || payload.test_case_id || ''));
+    const testCaseId = String(payload.test_case_id || payload.test_name || '');
+    const elapsedMs = Number(payload.elapsed_ms ?? 0);
+
+    // pytest reported how many tests it collected → exact total + count line.
+    if (action === 'collected') {
+      const count = Number(payload.sequence ?? payload.target ?? 0);
+      if (state) {
+        state.total = count || state.total;
+        state.collected = true;
+      }
+      log.setStage('Running Tests');
+      await log.info(`Found ${count} test case(s).`, { stage: 'Discovering Tests' });
+      return;
+    }
+
+    if (action === 'test') {
+      if (status === 'running') {
+        if (state) {
+          state.started += 1;
+          state.testStart.set(testCaseId, elapsedMs);
+        }
+        const idx = state?.started ?? 0;
+        const total = state?.total ?? 0;
+        await log.progress(
+          idx,
+          total,
+          `Running test ${idx}${total ? ` of ${total}` : ''}: ${name}`,
+          { testCaseId, testName: name },
+        );
+        return;
+      }
+      if (['passed', 'failed', 'skipped'].includes(status)) {
+        if (state) state.completed += 1;
+        const startedAt = state?.testStart.get(testCaseId);
+        const durationMs =
+          startedAt !== undefined ? Math.max(0, elapsedMs - startedAt) : undefined;
+        const dur = durationMs !== undefined ? ` (${(durationMs / 1000).toFixed(1)}s)` : '';
+        const meta: Record<string, unknown> = { testCaseId };
+        if (durationMs !== undefined) meta.durationMs = durationMs;
+        if (status === 'passed') {
+          await log.pass(`${name} passed${dur}`, { testCaseId, testName: name, progress: pct(), meta });
+        } else if (status === 'skipped') {
+          await log.info(`${name} skipped`, { testCaseId, testName: name, progress: pct(), meta });
+        } else {
+          const reason = state?.lastError.get(testCaseId);
+          if (reason) meta.reason = reason;
+          await log.fail(`${name} failed${dur}${reason ? ` — ${reason}` : ''}`, {
+            testCaseId,
+            testName: name,
+            progress: pct(),
+            meta,
+          });
+        }
+        return;
+      }
+      return;
+    }
+
+    // Runtime errors surfaced by page listeners (pageerror/console/network) or
+    // a failing action — record the reason and stream it as an ERROR line.
+    if (status === 'failed') {
+      const target = String(payload.target || '');
+      const value = String(payload.value_summary || '');
+      const detail = [target, value].filter(Boolean).join(' — ');
+      if (detail) {
+        if (state && testCaseId) state.lastError.set(testCaseId, target || detail);
+        await log.error(detail, { testCaseId, testName: name });
+      }
     }
   }
 
@@ -652,6 +883,12 @@ export class ExecutionsService {
     const run = await this.runs.findOne({ where: { id: runId } });
     if (!run) return;
 
+    const log = this.log(run, correlationId);
+    await log.stage(
+      'Capturing Evidence',
+      'Collecting screenshots, traces and videos…',
+    );
+
     // Persist per-test results derived from streamed test events (FR-RES-001).
     const existing = await this.results.count({
       where: { executionRunId: runId },
@@ -680,6 +917,10 @@ export class ExecutionsService {
       this.emitStatus(run, correlationId);
     }
 
+    // Single terminal log line for the run (avoids double-logging: neither
+    // onStatusEvent nor logEngineEvent emit terminal lines).
+    await this.logTerminal(run, log);
+
     if (run.createdBy) {
       await this.notifications.notify({
         userId: run.createdBy,
@@ -691,6 +932,54 @@ export class ExecutionsService {
         resourceId: run.id,
         correlationId,
       });
+    }
+
+    this.forgetRun(runId);
+  }
+
+  /** Emit the final Completed/Failed log line for a settled run. */
+  private async logTerminal(
+    run: ExecutionRun,
+    log: ScopedExecutionLogger,
+  ): Promise<void> {
+    const metrics = (run.metrics ?? {}) as Record<string, unknown>;
+    const summary = summariseMetrics(run.metrics);
+    const err = metrics.error ? String(metrics.error) : '';
+    const meta = err ? { error: err } : undefined;
+    switch (run.status) {
+      case 'passed':
+        log.setStage('Completed');
+        await log.success(`Execution completed successfully — ${summary}.`, {
+          progress: 100,
+        });
+        break;
+      case 'partially_passed':
+        log.setStage('Completed');
+        await log.warning(`Execution completed with failures — ${summary}.`, {
+          progress: 100,
+        });
+        break;
+      case 'failed':
+        log.setStage('Failed');
+        await log.fail(`Execution failed — ${summary}.`, { progress: 100, meta });
+        break;
+      case 'timed_out':
+        log.setStage('Failed');
+        await log.error('Execution timed out before completing.', {
+          progress: 100,
+          meta,
+        });
+        break;
+      case 'cancelled':
+        log.setStage('Failed');
+        await log.warning('Execution cancelled.', { progress: 100 });
+        break;
+      default:
+        log.setStage('Failed');
+        await log.error(`Execution ended (${run.status}) — ${err || summary}.`, {
+          progress: 100,
+          meta,
+        });
     }
   }
 
@@ -734,6 +1023,17 @@ export class ExecutionsService {
     return events;
   }
 
+  /** Ordered persisted execution log lines for replay after refresh/reconnect
+   * (real-time execution logs). Dedup on the client is by `seq`. */
+  async getLogs(
+    id: string,
+    user: AuthUser,
+    fromSeq = 0,
+  ): Promise<ExecutionLogEntry[]> {
+    await this.getOne(id, user);
+    return this.execLog.fetch(id, fromSeq);
+  }
+
   /** Stop control (FR-V3-EXE-008): safe cancellation with evidence retained. */
   async cancel(id: string, user: AuthUser, correlationId?: string) {
     const run = await this.getOne(id, user);
@@ -745,13 +1045,20 @@ export class ExecutionsService {
     }
     const controller = this.abortControllers.get(id);
 
+    const log = this.log(run, correlationId);
+    await log.warning(`Cancellation requested by ${user.email}.`);
+
     if (run.status === 'queued') {
       run.status = 'cancelled';
       run.finishedAt = new Date();
       await this.runs.save(run);
       this.emitStatus(run, correlationId);
+      // A queued run never streams, so log the terminal line + clean up here.
+      await this.logTerminal(run, log);
+      this.forgetRun(id);
     } else {
       await this.setStatus(run, 'stopping', correlationId);
+      await log.info('Stopping the runner and its browser…');
     }
 
     let cancelled = true;

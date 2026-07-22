@@ -10,6 +10,7 @@ pytestmark = [pytest.mark.generated]
 
 def test_valid_email_password_login(page: Page, base_url: str, credentials, target_available) -> None:
     login = SampleLoginPage(page, base_url)
+    print(f"Base URL: {base_url}")
     login.goto()
     page.wait_for_timeout(60000)
     login.login(credentials.username, credentials.password)
@@ -20,6 +21,7 @@ def test_valid_email_password_login(page: Page, base_url: str, credentials, targ
 
 def test_invalid_email_login(page: Page, base_url: str, credentials, target_available) -> None:
     login = SampleLoginPage(page, base_url)
+    print(f"Base URL: {base_url}")
     login.goto()
     page.wait_for_timeout(60000)
     login.enter_email('invaliduser@example.com')
@@ -30,6 +32,7 @@ def test_invalid_email_login(page: Page, base_url: str, credentials, target_avai
 # REQ: REQ-1,REQ-4
 
 def test_invalid_password_login(page: Page, base_url: str, credentials, target_available) -> None:
+    print(f"Base URL: {base_url}")
     login = SampleLoginPage(page, base_url)
     login.goto()
     page.wait_for_timeout(60000)
@@ -41,6 +44,7 @@ def test_invalid_password_login(page: Page, base_url: str, credentials, target_a
 # REQ: REQ-1,REQ-5
 
 def test_empty_fields_login(page: Page, base_url: str, credentials, target_available) -> None:
+    print(f"Base URL: {base_url}")
     login = SampleLoginPage(page, base_url)
     login.goto()
     page.wait_for_timeout(60000)
