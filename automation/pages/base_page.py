@@ -144,6 +144,27 @@ class BasePage:
         """Locate an element by its ``data-testid`` attribute."""
         return self.page.get_by_test_id(test_id)
 
+    # Playwright-native aliases (``get_by_*``). The framework's documented
+    # convention (and the Automation Agent's generated page objects) use the
+    # ``get_by_*`` names; these thin aliases make that generated code resolve
+    # against the same accessibility-first locators, so a page object may use
+    # either spelling interchangeably.
+    def get_by_role(self, role: str, name: str | None = None) -> Locator:
+        """Alias of :meth:`by_role`."""
+        return self.by_role(role, name)
+
+    def get_by_label(self, text: str, *, exact: bool = False) -> Locator:
+        """Alias of :meth:`by_label`."""
+        return self.by_label(text, exact=exact)
+
+    def get_by_placeholder(self, text: str, *, exact: bool = False) -> Locator:
+        """Alias of :meth:`by_placeholder`."""
+        return self.by_placeholder(text, exact=exact)
+
+    def get_by_test_id(self, test_id: str) -> Locator:
+        """Alias of :meth:`by_test_id`."""
+        return self.by_test_id(test_id)
+
     # -- web-first assertion helpers (FR-AUT-004) ----------------------------
 
     def assert_visible(self, locator: Locator) -> None:

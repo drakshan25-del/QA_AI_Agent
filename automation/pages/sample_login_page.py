@@ -2,24 +2,30 @@ from playwright.sync_api import Locator, Page
 
 from automation.pages.base_page import BasePage
 
+
 class SampleLoginPage(BasePage):
-    path = '/login'
+    """Page object for https://practicetestautomation.com/practice-test-login/.
+
+    The project ``base_url`` is already the full login-page URL, so navigation
+    goes straight to it — no extra path is appended.
+    """
 
     def __init__(self, page: Page, base_url: str) -> None:
         super().__init__(page, base_url)
-        self.email_field: Locator = self.get_by_label('Username')
-        self.password_field: Locator = self.get_by_label('Password')
-        self.login_button: Locator = self.get_by_role('button', name='Login')
-        self.flash: Locator = self.get_by_role('alert')
-        self.error_message: Locator = self.get_by_role('alert', name='Your username is invalid! Please try again.')
+        self.username_field: Locator = page.locator("#username")
+        self.password_field: Locator = page.locator("#password")
+        self.submit_button: Locator = page.locator("#submit")
+        self.error_message: Locator = page.locator("#error")
+        self.success_heading: Locator = page.get_by_role(
+            "heading", name="Logged In Successfully"
+        )
 
-    def goto(self) -> None:
-        self.page.goto(self.path)
+    def open(self) -> None:
+        """Navigate directly to the login page (base_url), no path appended."""
+        self.page.goto(self.base_url)
 
-    def enter_email(self, email: str) -> None:
-        self.fill(self.email_field, email)
-
-    def login(self, password: str) -> None:
-        self.enter_email('user@example.com')
-        self.fill(self.password_field, password)
-        self.click(self.login_button)
+    def login(self, username: str, password: str) -> None:
+        self.open()
+        self.fill(self.username_field, username, label="Username")
+        self.fill(self.password_field, password, label="Password")
+        self.click(self.submit_button, label="Submit")

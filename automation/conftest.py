@@ -137,6 +137,14 @@ def target_available(base_url: str) -> None:
     to every test that requests this fixture.
     """
     try:
-        httpx.get(base_url, timeout=2.0)
+        # 10s (not 2s) + redirects + a browser-like UA so a slow or
+        # CDN/Cloudflare-fronted external target isn't spuriously treated as
+        # down and skipped.
+        httpx.get(
+            base_url,
+            timeout=10.0,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (qa-agent target probe)"},
+        )
     except httpx.HTTPError:
         pytest.skip("target app not running")

@@ -1,34 +1,51 @@
-"""KeepMe Control Centre staging login tests.
-
-AI-generated draft (run 6a0852f0), corrected by the human reviewer at the
-FR-HITL-001 gate: the draft imported the sample-app page object and asserted
-sample-app behaviour; corrected to KeepmeLoginPage and the behaviour observed
-on staging (success navigates away from /login; failure stays and shows an
-'Invalid Credentials' toast). Recorded as human correction effort (§15.2).
-"""
+import re
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
-from automation.pages.keepme_login_page import KeepmeLoginPage
+from automation.pages.sample_login_page import SampleLoginPage
 
 pytestmark = [pytest.mark.generated]
 
+# Public, documented practice credentials for practicetestautomation.com.
+VALID_USERNAME = "student"
+VALID_PASSWORD = "Password123"
 
-# TC: TC-001 Valid credentials - Successful login
-# REQ: 6eec0e7bcad64662be9983c7c5af8c89
-def test_successful_login(page: Page, base_url: str, credentials, target_available) -> None:
-    login = KeepmeLoginPage(page, base_url)
-    login.goto()
-    login.login(credentials.username, credentials.password)
-    login.assert_left_login()
+# NOTE: these tests deliberately do NOT depend on the ``target_available``
+# fixture. That fixture probes the target with httpx, which cannot pass the
+# Cloudflare JS challenge fronting practicetestautomation.com (it returns
+# 406/409 to non-browser clients) and would spuriously skip the suite. A real
+# Chromium browser solves the challenge, so we let the browser navigate.
 
 
-# TC: TC-003 Invalid password - Login failure
-# REQ: 6eec0e7bcad64662be9983c7c5af8c89
-def test_invalid_password_login_failure(page: Page, base_url: str, credentials, target_available) -> None:
-    login = KeepmeLoginPage(page, base_url)
-    login.goto()
-    login.login(credentials.username, "not-the-real-password")
-    login.assert_alert_contains("Invalid Credentials")
-    login.assert_still_on_login()
+# TC-001 Valid Email and Password Login
+# REQ: REQ-1,REQ-2
+def test_valid_email_password_login(page: Page, base_url: str) -> None:
+    login = SampleLoginPage(page, base_url)
+    login.login(VALID_USERNAME, VALID_PASSWORD)
+    expect(page).to_have_url(re.compile(r".*logged-in-successfully.*"))
+    expect(login.success_heading).to_be_visible()
+
+
+# TC-002 Invalid Email Login
+# REQ: REQ-1,REQ-3
+def test_invalid_email_login(page: Page, base_url: str) -> None:
+    login = SampleLoginPage(page, base_url)
+    login.login("incorrectUser", VALID_PASSWORD)
+    expect(login.error_message).to_contain_text("Your username is invalid!")
+
+
+# TC-003 Invalid Password Login
+# REQ: REQ-1,REQ-4
+def test_invalid_password_login(page: Page, base_url: str) -> None:
+    login = SampleLoginPage(page, base_url)
+    login.login(VALID_USERNAME, "wrongPassword")
+    expect(login.error_message).to_contain_text("Your password is invalid!")
+
+
+# TC-004 Empty Email and Password Fields
+# REQ: REQ-1,REQ-5
+def test_empty_email_password_fields(page: Page, base_url: str) -> None:
+    login = SampleLoginPage(page, base_url)
+    login.login("", "")
+    expect(login.error_message).to_contain_text("Your username is invalid!")
