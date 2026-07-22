@@ -103,8 +103,24 @@ def validate_generated_code(
         normalized.append((path, content))
         issues.extend(_static_issues(path, content, allowed_domains))
 
-    if run_collection and normalized:
+    # Collection imports the generated modules (module-level code executes),
+    # so it must only ever run on files the static gate already cleared —
+    # otherwise a forbidden payload would execute at validation time (SEC-005).
+    static_passed = not any(i.severity == "error" for i in issues)
+    if run_collection and normalized and static_passed:
         issues.extend(_collect_in_mirror(normalized))
+    elif run_collection and normalized:
+        issues.append(
+            ValidationIssue(
+                check="collection",
+                severity="warning",
+                message=(
+                    "pytest collection skipped: static safety checks failed and "
+                    "collection would import (execute) the generated modules"
+                ),
+                location=";".join(p for p, _ in normalized),
+            )
+        )
 
     passed = not any(i.severity == "error" for i in issues)
     logger.info(

@@ -15,9 +15,7 @@ Contract observed on https://agentstaging.keepme.ai/login (rendered DOM,
 
 from __future__ import annotations
 
-import re
-
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page
 
 from automation.pages.base_page import BasePage
 
@@ -38,20 +36,22 @@ class KeepmeLoginPage(BasePage):
         """Fill the credentials and submit the form.
 
         Credentials must come from the ``credentials`` fixture, never from
-        literals in test code (FR-AUT-005).
+        literals in test code (FR-AUT-005). Interactions use the instrumented
+        BasePage helpers so the live timeline shows each fill/click
+        (FR-EXE-007); the password value is redacted (SEC-007).
         """
-        self.email_input.fill(email)
-        self.password_input.fill(password)
-        self.sign_in_button.click()
+        self.fill(self.email_input, email, "email")
+        self.fill(self.password_input, password, "password")
+        self.click(self.sign_in_button, "Sign In")
 
     def assert_alert_contains(self, text: str) -> None:
         """Web-first assertion that a toast/alert containing ``text`` appears."""
-        expect(self.alerts.filter(has_text=text).first).to_be_visible()
+        self.assert_visible(self.alerts.filter(has_text=text).first)
 
     def assert_still_on_login(self) -> None:
         """Assert the browser stayed on the login page (failed login)."""
-        expect(self.page).to_have_url(re.compile(r".*/login.*"))
+        self.assert_url_contains("/login")
 
     def assert_left_login(self) -> None:
         """Assert the browser navigated away from /login (successful login)."""
-        expect(self.page).not_to_have_url(re.compile(r".*/login.*"))
+        self.assert_url_not_contains("/login")

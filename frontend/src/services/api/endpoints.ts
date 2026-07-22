@@ -360,6 +360,13 @@ export const automationApi = {
     const { data } = await http.get<GeneratedArtifact>(`/automation/${id}`);
     return data;
   },
+  /** Save an in-place edit of the generated script (AC-004). */
+  async update(id: string, content: string): Promise<GeneratedArtifact> {
+    const { data } = await http.patch<GeneratedArtifact>(`/automation/${id}`, {
+      content,
+    });
+    return data;
+  },
   async validate(id: string): Promise<ValidationReport | GeneratedArtifact> {
     const { data } = await http.post(`/automation/${id}/validate`, {});
     return data as ValidationReport | GeneratedArtifact;

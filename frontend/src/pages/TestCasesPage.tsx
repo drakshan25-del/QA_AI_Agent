@@ -1,5 +1,10 @@
-import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
@@ -72,6 +77,9 @@ export function TestCasesPage(): JSX.Element {
   useProjectEvents(projectId);
 
   const [filter, setFilter] = useState<TestCaseFilter>(emptyFilter);
+  // Debounced copy drives the query so typing in Search doesn't fire one
+  // request (and one full table swap) per keystroke.
+  const [debouncedFilter, setDebouncedFilter] = useState<TestCaseFilter>(emptyFilter);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<TestCase | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -79,10 +87,18 @@ export function TestCasesPage(): JSX.Element {
   const setF = (patch: Partial<TestCaseFilter>) =>
     setFilter((prev) => ({ ...prev, ...patch, page: patch.page ?? 1 }));
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedFilter(filter), 250);
+    return () => clearTimeout(t);
+  }, [filter]);
+
   const listQuery = useQuery({
-    queryKey: qk.testCases(projectId, filter),
-    queryFn: () => testCasesApi.list(projectId, filter),
+    queryKey: qk.testCases(projectId, debouncedFilter),
+    queryFn: () => testCasesApi.list(projectId, debouncedFilter),
     enabled: !!projectId,
+    // Keep the previous page rendered while the next loads — no full-page
+    // spinner flash on every filter/page change.
+    placeholderData: keepPreviousData,
   });
   const requirementsQuery = useQuery({
     queryKey: qk.requirements(projectId),
@@ -153,6 +169,7 @@ export function TestCasesPage(): JSX.Element {
         <LiveJobConsole
           projectId={projectId}
           jobId={activeJobId}
+          onRetried={setActiveJobId}
           title="Generating test cases"
           onFinished={invalidate}
         />

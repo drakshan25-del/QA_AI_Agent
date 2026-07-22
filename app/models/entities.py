@@ -77,6 +77,7 @@ class Analysis(Base):
 
 
 class TestPlan(Base):
+    __test__ = False  # prevent pytest collection of this ORM entity
     __tablename__ = "test_plans"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
@@ -91,6 +92,7 @@ class TestPlan(Base):
 
 
 class TestCase(Base):
+    __test__ = False  # prevent pytest collection of this ORM entity
     __tablename__ = "test_cases"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
@@ -173,6 +175,7 @@ class ExecutionRun(Base):
 
 
 class TestResult(Base):
+    __test__ = False  # prevent pytest collection of this ORM entity
     __tablename__ = "test_results"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)

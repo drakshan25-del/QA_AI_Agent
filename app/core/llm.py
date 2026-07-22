@@ -59,6 +59,9 @@ def get_chat_model(
         "model": model or settings.llm_model,
         "temperature": settings.llm_temperature if temperature is None else temperature,
         "base_url": settings.ollama_base_url,
+        # Bound every model call's wall clock (§17 model errors): a hung
+        # Ollama request must fail loudly instead of pinning a worker thread.
+        "client_kwargs": {"timeout": settings.llm_timeout_seconds},
     }
     if format_json:
         kwargs["format"] = "json"

@@ -23,6 +23,7 @@ import {
 } from '../../common/errors';
 import { EventsService } from '../events/events.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MembershipService } from '../../common/access/membership.service';
 
 export interface CreateJobInput {
   projectId: string;
@@ -100,6 +101,7 @@ export class JobsService {
     private readonly events: EventsService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly membership: MembershipService,
   ) {}
 
   registerRetryHandler(type: JobType, handler: RetryHandler): void {
@@ -187,8 +189,9 @@ export class JobsService {
     });
   }
 
-  private context(job: Job): JobContext {
+  private context(job: Job, abort?: { current: boolean }): JobContext {
     const isCancelled = async (): Promise<boolean> => {
+      if (abort?.current) return true;
       const fresh = await this.repo.findOne({
         where: { id: job.id },
         select: { id: true, cancelRequested: true },
@@ -196,7 +199,13 @@ export class JobsService {
       return !!fresh?.cancelRequested;
     };
     return {
-      log: (entry) => this.log(job, entry),
+      // Once the job has been settled as timed-out/cancelled, an orphaned
+      // worker must stop at its next interaction: no more artefact writes
+      // under a terminal job and no duplicate log seq values (NFR-REL-001).
+      log: (entry) => {
+        if (abort?.current) throw new JobCancelledError();
+        return this.log(job, entry);
+      },
       isCancelled,
       checkpoint: async () => {
         if (await isCancelled()) throw new JobCancelledError();
@@ -241,8 +250,14 @@ export class JobsService {
       if (typeof t.unref === 'function') t.unref();
     });
 
+    const abort = { current: false };
+    // The loser of the race keeps running; its eventual rejection (from the
+    // aborted context) must never surface as an unhandled rejection.
+    const workerPromise = worker(job, this.context(job, abort));
+    workerPromise.catch(() => undefined);
+
     try {
-      const result = await Promise.race([worker(job, this.context(job)), timeout]);
+      const result = await Promise.race([workerPromise, timeout]);
       settled = true;
 
       const hasWarnings = (result.warnings ?? []).length > 0;
@@ -289,6 +304,9 @@ export class JobsService {
     } catch (err) {
       if (settled) return; // late worker rejection after timeout already handled
       settled = true;
+      // Latch the abort so the still-running worker halts at its next
+      // log/checkpoint call instead of writing artefacts for a dead job.
+      abort.current = true;
 
       if (err instanceof JobCancelledError) {
         job.finishedAt = new Date();
@@ -368,9 +386,12 @@ export class JobsService {
     }
   }
 
-  async get(id: string): Promise<Job> {
+  async get(id: string, user?: AuthUser): Promise<Job> {
     const job = await this.repo.findOne({ where: { id } });
     if (!job) throw new NotFoundAppException(`Job ${id} not found`);
+    // By-id access requires membership of the job's project (no IDOR):
+    // internal callers (worker loop) omit `user`.
+    if (user) await this.membership.ensureMember(job.projectId, user);
     return job;
   }
 
@@ -383,8 +404,8 @@ export class JobsService {
   }
 
   /** Ordered persisted log entries for replay after refresh (FR-V3-LOG-008). */
-  async getLogs(id: string, fromSeq = 0): Promise<JobLogEntry[]> {
-    await this.get(id);
+  async getLogs(id: string, fromSeq = 0, user?: AuthUser): Promise<JobLogEntry[]> {
+    await this.get(id, user);
     return this.logs.find({
       where: { jobId: id, ...(fromSeq ? { seq: MoreThan(fromSeq) } : {}) },
       order: { seq: 'ASC' },
@@ -394,7 +415,7 @@ export class JobsService {
 
   /** Request cooperative cancellation (FR-V3-LOG-009). */
   async cancel(id: string, user: AuthUser): Promise<Job> {
-    const job = await this.get(id);
+    const job = await this.get(id, user);
     if (isTerminalJobStatus(job.status)) {
       throw new ConflictAppException(
         `Job ${id} is already ${job.status} and cannot be cancelled.`,
@@ -430,7 +451,7 @@ export class JobsService {
     user: AuthUser,
     correlationId?: string,
   ): Promise<{ jobId: string; status: string; retryOfJobId: string }> {
-    const job = await this.get(id);
+    const job = await this.get(id, user);
     if (!isTerminalJobStatus(job.status)) {
       throw new ConflictAppException(
         `Job ${id} is still ${job.status}; only finished jobs can be retried.`,
@@ -449,16 +470,6 @@ export class JobsService {
     // Link the new attempt to the original for auditability.
     await this.repo.update({ id: accepted.jobId }, { retryOfJobId: job.id });
     return { ...accepted, retryOfJobId: job.id };
-  }
-
-  /** Retention sweep hook (FR-V3-ENT-011). */
-  async deleteLogsOlderThan(cutoff: Date): Promise<number> {
-    const res = await this.logs
-      .createQueryBuilder()
-      .delete()
-      .where('created_at < :cutoff', { cutoff: cutoff.toISOString() })
-      .execute();
-    return res.affected ?? 0;
   }
 }
 

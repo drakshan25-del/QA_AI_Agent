@@ -57,8 +57,13 @@ export function useExecutionEvents(
   const [state, dispatch] = useReducer(timelineReducer, initialTimelineState);
   const lastSeqRef = useRef(0);
   lastSeqRef.current = state.lastSeq;
+  // Latest known run status without retriggering the seed effect: keying the
+  // seed on `initialStatus` would blank and re-download the whole timeline on
+  // every queued→running→passed transition mid-run.
+  const initialStatusRef = useRef(options.initialStatus);
+  initialStatusRef.current = options.initialStatus;
 
-  // Seed persisted events once (replay), then keep live updates flowing.
+  // Seed persisted events once per run (replay), then keep live updates flowing.
   useEffect(() => {
     let cancelled = false;
     dispatch({ kind: 'reset' });
@@ -70,8 +75,9 @@ export function useExecutionEvents(
         for (const row of rows) {
           dispatch({ kind: 'event', envelope: rowToEnvelope(row) });
         }
-        if (options.initialStatus) {
-          dispatch({ kind: 'setStatus', status: options.initialStatus });
+        const initialStatus = initialStatusRef.current;
+        if (initialStatus) {
+          dispatch({ kind: 'setStatus', status: initialStatus });
         }
       } catch {
         // No persisted events yet — the live stream will populate the timeline.
@@ -80,7 +86,7 @@ export function useExecutionEvents(
     return () => {
       cancelled = true;
     };
-  }, [runId, options.initialStatus]);
+  }, [runId]);
 
   const handleEvent = useCallback(
     (envelope: EventEnvelope) => {

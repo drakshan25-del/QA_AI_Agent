@@ -200,12 +200,18 @@ export class ApprovalsService {
 
     // Regenerate/reject of an upstream artefact invalidates downstream.
     if (decision !== 'approved') {
-      await this.invalidateDownstream(type, id, user, correlationId);
+      await this.invalidateDownstream(type, id, entity.projectId, correlationId);
     }
 
     return { id, approvalStatus: nextStatus, version: entity.version };
   }
 
+  /**
+   * Bulk decisions are applied per item and never abandoned mid-list: a
+   * failure on one id is reported alongside the successes so the caller sees
+   * exactly which cases were affected (FR-TC-008 "bulk operation result is
+   * visible and every affected case has a history entry").
+   */
   async decideBulk(
     type: ApprovalResourceType,
     ids: string[],
@@ -213,12 +219,28 @@ export class ApprovalsService {
     comment: string,
     user: AuthUser,
     correlationId?: string,
-  ): Promise<{ id: string; approvalStatus: ApprovalStatus; version: number }[]> {
-    const out = [];
+  ): Promise<
+    {
+      id: string;
+      approvalStatus?: ApprovalStatus;
+      version?: number;
+      error?: string;
+    }[]
+  > {
+    const out: {
+      id: string;
+      approvalStatus?: ApprovalStatus;
+      version?: number;
+      error?: string;
+    }[] = [];
     for (const id of ids) {
-      out.push(
-        await this.decide(type, id, decision, comment, user, correlationId),
-      );
+      try {
+        out.push(
+          await this.decide(type, id, decision, comment, user, correlationId),
+        );
+      } catch (err) {
+        out.push({ id, error: (err as Error).message });
+      }
     }
     return out;
   }
@@ -259,19 +281,20 @@ export class ApprovalsService {
       await this.markApprovalsInvalidated(type, id);
       this.emitInvalidated(type, id, entity.projectId, correlationId);
     }
-    await this.invalidateDownstream(type, id, user, correlationId);
+    await this.invalidateDownstream(type, id, entity.projectId, correlationId);
   }
 
   private async invalidateDownstream(
     type: ApprovalResourceType,
     id: string,
-    _user: AuthUser,
+    projectId: string,
     correlationId?: string,
   ): Promise<void> {
     if (type === 'test_case') {
       // Automation generated from this test case is no longer trustworthy.
+      // Scoped to the artefact's project — never a cross-project table scan.
       const arts = await this.artifacts.find({
-        where: { status: 'active' },
+        where: { status: 'active', projectId },
       });
       const affected = arts.filter((a) =>
         (a.testCaseIds ?? []).includes(id),

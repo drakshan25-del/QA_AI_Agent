@@ -18,6 +18,7 @@ export class Finding {
   @Column({ type: 'varchar', name: 'project_id' })
   projectId!: string;
 
+  @Index()
   @Column({ type: 'varchar', name: 'execution_run_id', nullable: true })
   executionRunId!: string | null;
 

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Progress } from '../components/ui/Progress';
@@ -158,9 +158,9 @@ function DocumentList({ projectId }: { projectId: string }): JSX.Element {
                   </div>
                   <div className={s.itemControls}>
                     <StatusBadge status={d.parseStatus} label={`parse: ${d.parseStatus}`} />
-                    <Link to={`/documents/${d.id}/preview`}>
-                      <Button small>Preview</Button>
-                    </Link>
+                    <LinkButton small to={`/documents/${d.id}/preview`}>
+                      Preview
+                    </LinkButton>
                     <Button
                       small
                       variant="ghost"

@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 
 from automation.pages.sample_items_page import SampleItemsPage
 from automation.pages.sample_login_page import SampleLoginPage
@@ -29,7 +29,7 @@ def test_successful_login_shows_welcome(
     login = SampleLoginPage(page, base_url)
     login.goto()
     login.login(credentials.username, credentials.password)
-    expect(login.flash).to_contain_text("Welcome")
+    login.assert_flash_contains("Welcome")
 
 
 # TC: SMOKE-002 Failed login shows invalid credentials message
@@ -40,7 +40,7 @@ def test_failed_login_shows_invalid_credentials(
     login = SampleLoginPage(page, base_url)
     login.goto()
     login.login(credentials.username, "wrong-" + credentials.password)
-    expect(login.flash).to_contain_text("Invalid credentials")
+    login.assert_flash_contains("Invalid credentials")
 
 
 # TC: SMOKE-003 Added item appears in the items list
@@ -56,4 +56,4 @@ def test_add_item_appears_in_list(
     items.goto()
     item_text = f"smoke-item-{uuid.uuid4().hex[:8]}"
     items.add_item(item_text)
-    expect(items.item_with_text(item_text)).to_be_visible()
+    items.assert_item_present(item_text)

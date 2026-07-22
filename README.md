@@ -56,8 +56,44 @@ docker compose up --build    # postgres + redis + engine + backend + frontend
 
 Open http://localhost:5173, sign in with the seeded admin, create a project, upload documents, and drive the workflow through the approval gates to a live-visualised execution and report.
 
+## Quality gates & tests
+
+```bash
+# Python engine + V1 logic (162 tests)
+.venv/bin/python -m pytest tests/unit -q
+
+# Backend: build, unit tests, lint
+cd backend && npm run build && npm test && npm run lint
+
+# Frontend: types, unit tests, lint, production build
+cd frontend && npm run typecheck && npm test && npm run lint && npm run build
+```
+
+## CI (GitHub Actions, SRS §12)
+
+`.github/workflows/playwright-ci.yml` runs two suites:
+
+- **smoke** — always; targets the bundled `sample_app` started inside the runner.
+- **generated** — only when the repository defines the `QA_TARGET_BASE_URL`
+  (and optional `QA_ALLOWED_DOMAINS`) **variables** plus `QA_TEST_USERNAME` /
+  `QA_TEST_PASSWORD` **secrets**; these AI-generated tests target the
+  configured staging environment, never the sample app.
+
+Reports (JUnit + self-contained HTML), screenshots and traces upload as the
+`test-results` artifact on every run, pass or fail (§12.2).
+
+## Security posture (SEC-*, §13)
+
+- Self-registration can never grant a privileged role (admin/qa_lead/supervisor/devops).
+- Every project/run WebSocket subscription is authorised against project membership.
+- Generated code is statically gated (imports, dynamic-code builtins, filesystem
+  mutation, domain allow-list, secrets) **before** pytest collection ever imports it,
+  and browser traffic is runtime-restricted to allow-listed domains.
+- Engine token comparisons are constant-time; tokens travel only in headers.
+- Secrets are masked in logs, step events and reports.
+
 ---
 
 ## V1 (preserved)
 
-The original single-service Python/FastAPI + LangGraph app remains fully functional and is now the basis of the engine tier. Its docs, pipeline and 159 passing unit tests are unchanged. See git history and `docs/AI_QA_Agent_Project_Requirements.docx` for the V1 SRS; `docs/AI_QA_Agent_Project_Requirements_V2.docx` is the authoritative V2 spec.
+The original single-service Python/FastAPI + LangGraph app remains fully functional and is now the basis of the engine tier. Its docs, pipeline and 159 passing unit tests are unchanged. See git history and `docs/AI_QA_Agent_Project_Requirements.docx` for the V1 SRS; `docs/AI_QA_Agent_Project_Requirements_V2.docx` (and the authoritative `docs/AI_QA_Agent_Project_Requirements_V3.docx`) define the current platform.

@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -20,4 +21,13 @@ export class GenerateAutomationDto {
   @IsOptional()
   @IsBoolean()
   draftPreview?: boolean;
+}
+
+/** In-place edit of a generated automation script (editable code editor). */
+export class UpdateAutomationDto {
+  @ApiProperty({ description: 'The full edited script content.' })
+  @IsString()
+  // 1 MiB ceiling: generated test files are small; this bounds a hostile body.
+  @MaxLength(1_048_576, { message: 'content exceeds the 1 MiB limit' })
+  content!: string;
 }

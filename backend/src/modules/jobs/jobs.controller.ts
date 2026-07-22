@@ -23,14 +23,18 @@ export class JobsController {
   constructor(private readonly jobs: JobsService) {}
 
   @Get('jobs/:id')
-  async get(@Param('id') id: string) {
-    return this.jobs.get(id);
+  async get(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.jobs.get(id, user);
   }
 
   /** Ordered persisted live-log entries for replay (FR-V3-LOG-008). */
   @Get('jobs/:id/logs')
-  async logs(@Param('id') id: string, @Query('fromSeq') fromSeq?: string) {
-    return this.jobs.getLogs(id, fromSeq ? parseInt(fromSeq, 10) : 0);
+  async logs(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Query('fromSeq') fromSeq?: string,
+  ) {
+    return this.jobs.getLogs(id, fromSeq ? parseInt(fromSeq, 10) : 0, user);
   }
 
   /** Cooperative cancel for eligible long-running jobs (FR-V3-LOG-009). */

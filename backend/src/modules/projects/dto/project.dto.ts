@@ -1,5 +1,4 @@
 import {
-  IsArray,
   IsIn,
   IsNumber,
   IsOptional,
@@ -8,7 +7,7 @@ import {
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Role, Runner } from '../../../common/enums';
+import { ROLES, Role, Runner } from '../../../common/enums';
 
 export class CreateProjectDto {
   @ApiProperty()
@@ -135,14 +134,8 @@ export class AddMemberDto {
   @IsString()
   userId!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ enum: ROLES })
   @IsOptional()
-  @IsString()
+  @IsIn(ROLES as unknown as string[])
   projectRole?: Role;
-}
-
-export class AddMembersDto {
-  @ApiProperty({ type: [AddMemberDto] })
-  @IsArray()
-  members!: AddMemberDto[];
 }

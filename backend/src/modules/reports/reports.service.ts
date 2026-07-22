@@ -252,7 +252,7 @@ export class ReportsService {
     id: string,
     format: string,
     user: AuthUser,
-  ): Promise<{ contentType: string; filename: string; body: string }> {
+  ): Promise<{ contentType: string; filename: string; body: string | Buffer }> {
     const run = await this.loadRun(id, user);
     // FR-REP-006/FR-V3-ENT-002: only approved reports are exported.
     const publication = await this.approvals.latestStandalone('report', id);
@@ -302,14 +302,21 @@ export class ReportsService {
         )}</pre></body></html>`;
       return { contentType: 'text/html', filename: `${base}.html`, body: html };
     }
-    // pdf fallback → HTML payload (documented gap: no PDF renderer in this tier).
+    // Real PDF via the engine's headless Chromium (AIQA-REPORT-003). If the
+    // engine is unavailable, fall back to an HONEST HTML download — never
+    // HTML bytes labelled application/pdf, which no viewer can open.
     const html =
       (report?.html as string) || `<html><body><h1>Execution ${id}</h1></body></html>`;
-    return {
-      contentType: 'application/pdf',
-      filename: `${base}.pdf`,
-      body: html,
-    };
+    try {
+      const { pdfBase64 } = await this.engine.renderPdf(html);
+      return {
+        contentType: 'application/pdf',
+        filename: `${base}.pdf`,
+        body: Buffer.from(pdfBase64, 'base64'),
+      };
+    } catch {
+      return { contentType: 'text/html', filename: `${base}.html`, body: html };
+    }
   }
 }
 

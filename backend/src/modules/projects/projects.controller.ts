@@ -30,7 +30,7 @@ export class ProjectsController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles('qa_engineer', 'supervisor', 'admin', 'automation_engineer', 'devops')
+  @Roles('qa_engineer', 'qa_lead', 'supervisor', 'admin', 'automation_engineer', 'devops')
   async create(
     @Body() dto: CreateProjectDto,
     @CurrentUser() user: AuthUser,
@@ -77,7 +77,7 @@ export class ProjectsController {
 
   @Post(':id/members')
   @UseGuards(RolesGuard)
-  @Roles('supervisor', 'admin')
+  @Roles('qa_lead', 'supervisor', 'admin')
   async addMember(
     @Param('id') id: string,
     @Body() dto: AddMemberDto,

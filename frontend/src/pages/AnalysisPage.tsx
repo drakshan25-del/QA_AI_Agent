@@ -136,6 +136,7 @@ export function AnalysisPage(): JSX.Element {
         <LiveJobConsole
           projectId={projectId}
           jobId={activeJobId}
+          onRetried={setActiveJobId}
           title="Analysing documents and requirements"
           onFinished={() => {
             void qc.invalidateQueries({ queryKey: qk.analyses(projectId) });

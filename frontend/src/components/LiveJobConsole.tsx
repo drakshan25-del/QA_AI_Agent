@@ -63,18 +63,23 @@ export function LiveJobConsole({
   jobId,
   title,
   onFinished,
+  onRetried,
 }: {
   projectId: string;
   jobId: string;
   title: string;
   onFinished?: (job: Job) => void;
+  /** Called with the NEW job id after a retry, so the parent can follow the
+   * fresh attempt instead of the finished one (FR-V3-LOG-009). */
+  onRetried?: (newJobId: string) => void;
 }): JSX.Element {
   const qc = useQueryClient();
   const [rows, setRows] = useState<LogRow[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [expanded, setExpanded] = useState<number | null>(null);
-  const seenSeq = useRef(new Set<number>());
   const finishedRef = useRef(false);
+  const listRef = useRef<HTMLOListElement | null>(null);
+  const stickToBottomRef = useRef(true);
 
   const { data: job, refetch: refetchJob } = useQuery({
     queryKey: ['jobs', jobId],
@@ -83,11 +88,14 @@ export function LiveJobConsole({
       q.state.data && TERMINAL.includes(q.state.data.status) ? false : 5000,
   });
 
+  // Pure updater: dedupe against prev itself so StrictMode double-invocation
+  // and concurrent-render replays can never drop entries (no external
+  // mutation inside the updater).
   const appendRows = useCallback((incoming: LogRow[]) => {
     setRows((prev) => {
-      const fresh = incoming.filter((r) => !seenSeq.current.has(r.seq));
+      const have = new Set(prev.map((r) => r.seq));
+      const fresh = incoming.filter((r) => !have.has(r.seq));
       if (!fresh.length) return prev;
-      for (const r of fresh) seenSeq.current.add(r.seq);
       return [...prev, ...fresh].sort((a, b) => a.seq - b.seq);
     });
   }, []);
@@ -112,11 +120,17 @@ export function LiveJobConsole({
   }, [jobId, appendRows]);
 
   useEffect(() => {
-    seenSeq.current = new Set();
     setRows([]);
     finishedRef.current = false;
     void replay();
   }, [jobId, replay]);
+
+  // Follow the stream: keep the console pinned to the newest entry unless
+  // the user has scrolled up to read history (§23.1.1 live logs).
+  useEffect(() => {
+    const el = listRef.current;
+    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [rows.length]);
 
   const onEvent = useCallback(
     (envelope: EventEnvelope) => {
@@ -173,8 +187,10 @@ export function LiveJobConsole({
   });
   const retryMutation = useMutation({
     mutationFn: () => jobsApi.retry(jobId),
-    onSuccess: () => {
+    onSuccess: (res: { jobId?: string }) => {
       void qc.invalidateQueries({ queryKey: ['projects', projectId, 'jobs'] });
+      // Hand the new attempt back to the parent so the console follows it.
+      if (res?.jobId) onRetried?.(res.jobId);
     },
   });
 
@@ -260,6 +276,12 @@ export function LiveJobConsole({
       </div>
 
       <ol
+        ref={listRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickToBottomRef.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
         style={{
           listStyle: 'none',
           margin: 0,

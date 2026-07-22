@@ -417,7 +417,7 @@ export class TestPlansService {
     id: string,
     format: string,
     user: AuthUser,
-  ): Promise<{ contentType: string; filename: string; body: string }> {
+  ): Promise<{ contentType: string; filename: string; body: string | Buffer }> {
     const plan = await this.getOne(id, user);
     const base = `test-plan-${plan.id}`;
     if (format === 'json') {
@@ -432,18 +432,39 @@ export class TestPlansService {
       };
     }
     const md = renderTestPlanMarkdown(plan.title, plan.sections);
-    // docx/pdf are delivered as Markdown text in this tier (documented gap).
-    const contentType =
-      format === 'md'
-        ? 'text/markdown'
-        : format === 'docx'
-          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : format === 'pdf'
-            ? 'application/pdf'
-            : 'text/markdown';
-    const ext = ['md', 'docx', 'pdf'].includes(format) ? format : 'md';
-    return { contentType, filename: `${base}.${ext}`, body: md };
+    if (format === 'pdf') {
+      // Real PDF via the engine's headless Chromium (AIQA-REPORT-003 class):
+      // if rendering is unavailable, deliver honest Markdown — never text
+      // bytes labelled application/pdf.
+      try {
+        const { pdfBase64 } = await this.engine.renderPdf(
+          markdownToPrintableHtml(plan.title, md),
+        );
+        return {
+          contentType: 'application/pdf',
+          filename: `${base}.pdf`,
+          body: Buffer.from(pdfBase64, 'base64'),
+        };
+      } catch {
+        return { contentType: 'text/markdown', filename: `${base}.md`, body: md };
+      }
+    }
+    // No DOCX renderer in this tier (documented gap): deliver honest
+    // Markdown instead of text bytes labelled as a Word document.
+    return { contentType: 'text/markdown', filename: `${base}.md`, body: md };
   }
+}
+
+/** Minimal print-friendly HTML wrapper for Markdown content (PDF export). */
+function markdownToPrintableHtml(title: string, md: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; margin: 32px; color: #111; }
+  h1 { font-size: 22px; border-bottom: 2px solid #444; padding-bottom: 6px; }
+  pre { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.55; }
+</style></head><body><h1>${esc(title)}</h1><pre>${esc(md)}</pre></body></html>`;
 }
 
 function renderTestPlanMarkdown(

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
@@ -6,8 +6,9 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
-import { auditApi, type AuditFilter } from '../services/api/endpoints';
+import { auditApi, projectsApi, type AuditFilter } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
+import { useAuth } from '../auth/AuthContext';
 import type { AuditEvent, Paginated } from '../services/api/types';
 import { formatDate } from '../lib/format';
 import { toDisplayString } from '../lib/sanitize';
@@ -22,16 +23,37 @@ const controlStyle = {
   color: 'var(--text)',
 };
 
+const PAGE_SIZE = 50;
+
 export function AuditPage(): JSX.Element {
-  const [draft, setDraft] = useState<AuditFilter>({ limit: 50 });
-  const [applied, setApplied] = useState<AuditFilter>({ limit: 50 });
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [draft, setDraft] = useState<AuditFilter>({ limit: PAGE_SIZE });
+  const [applied, setApplied] = useState<AuditFilter>({ limit: PAGE_SIZE });
+
+  const projectsQuery = useQuery({
+    queryKey: qk.projects,
+    queryFn: () => projectsApi.list(),
+  });
+  const projects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
+
+  // Non-admin audit queries must be project-scoped (server-enforced);
+  // default to the user's first project instead of erroring on load.
+  useEffect(() => {
+    if (isAdmin || draft.projectId || projects.length === 0) return;
+    const first = projects[0]!.id;
+    setDraft((prev) => ({ ...prev, projectId: first }));
+    setApplied((prev) => ({ ...prev, projectId: first }));
+  }, [isAdmin, projects, draft.projectId]);
 
   const q = useQuery({
     queryKey: qk.audit(applied),
     queryFn: () => auditApi.list(applied),
+    enabled: isAdmin || !!applied.projectId,
   });
 
   const set = (patch: Partial<AuditFilter>) => setDraft((prev) => ({ ...prev, ...patch }));
+  const offset = applied.offset ?? 0;
 
   return (
     <div className={L.stack}>
@@ -60,13 +82,19 @@ export function AuditPage(): JSX.Element {
             value={draft.resourceType ?? ''}
             onChange={(e) => set({ resourceType: e.target.value || undefined })}
           />
-          <input
-            aria-label="Project id"
-            placeholder="Project id"
+          <select
+            aria-label="Project"
             style={controlStyle}
             value={draft.projectId ?? ''}
             onChange={(e) => set({ projectId: e.target.value || undefined })}
-          />
+          >
+            {isAdmin && <option value="">All projects</option>}
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
           <label className={L.muted}>
             From{' '}
             <input
@@ -85,15 +113,23 @@ export function AuditPage(): JSX.Element {
               onChange={(e) => set({ to: e.target.value || undefined })}
             />
           </label>
-          <Button variant="primary" small onClick={() => setApplied(draft)}>
+          <Button
+            variant="primary"
+            small
+            onClick={() => setApplied({ ...draft, offset: 0 })}
+          >
             Search
           </Button>
           <Button
             variant="ghost"
             small
             onClick={() => {
-              setDraft({ limit: 50 });
-              setApplied({ limit: 50 });
+              const base: AuditFilter = {
+                limit: PAGE_SIZE,
+                ...(isAdmin ? {} : { projectId: draft.projectId }),
+              };
+              setDraft(base);
+              setApplied(base);
             }}
           >
             Reset
@@ -106,9 +142,42 @@ export function AuditPage(): JSX.Element {
           const events: AuditEvent[] = Array.isArray(data)
             ? data
             : (data as Paginated<AuditEvent>).items ?? [];
-          if (events.length === 0) {
+          if (events.length === 0 && offset === 0) {
             return <EmptyState title="No audit events match your filters" />;
           }
+          const pager = (
+            <div className={L.row} style={{ marginTop: 10 }}>
+              <Button
+                small
+                variant="ghost"
+                disabled={offset === 0}
+                onClick={() =>
+                  setApplied((prev) => ({
+                    ...prev,
+                    offset: Math.max(0, (prev.offset ?? 0) - PAGE_SIZE),
+                  }))
+                }
+              >
+                Previous
+              </Button>
+              <span className={L.muted}>
+                {offset + 1}–{offset + events.length}
+              </span>
+              <Button
+                small
+                variant="ghost"
+                disabled={events.length < PAGE_SIZE}
+                onClick={() =>
+                  setApplied((prev) => ({
+                    ...prev,
+                    offset: (prev.offset ?? 0) + PAGE_SIZE,
+                  }))
+                }
+              >
+                Next
+              </Button>
+            </div>
+          );
           return (
             <div className={ui.tableWrap}>
               <table className={ui.table}>
@@ -148,6 +217,7 @@ export function AuditPage(): JSX.Element {
                   ))}
                 </tbody>
               </table>
+              {pager}
             </div>
           );
         }}

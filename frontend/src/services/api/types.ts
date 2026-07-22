@@ -452,7 +452,12 @@ export interface ExecutionPlanStep {
 }
 
 export interface ExecutionPlan {
-  plans: Array<{ testCaseId: string; steps: ExecutionPlanStep[] }>;
+  plans: Array<{
+    testCaseId: string;
+    caseKey?: string;
+    title?: string;
+    steps: ExecutionPlanStep[];
+  }>;
 }
 
 export interface ExecutionRun {

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { Select } from '../components/ui/Field';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
@@ -100,9 +101,9 @@ export function ExecutionLivePage(): JSX.Element {
                 Restart
               </Button>
             )}
-            <Link to={`/executions/${id}/report`}>
-              <Button variant="primary">View report</Button>
-            </Link>
+            <LinkButton variant="primary" to={`/executions/${id}/report`}>
+              View report
+            </LinkButton>
           </div>
         }
       />

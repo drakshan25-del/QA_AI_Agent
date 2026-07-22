@@ -6,10 +6,7 @@
  * cookie (`POST /auth/refresh`).
  */
 
-type Listener = (token: string | null) => void;
-
 let accessToken: string | null = null;
-const listeners = new Set<Listener>();
 
 export const tokenStore = {
   get(): string | null {
@@ -17,13 +14,8 @@ export const tokenStore = {
   },
   set(token: string | null): void {
     accessToken = token;
-    for (const l of listeners) l(token);
   },
   clear(): void {
     this.set(null);
-  },
-  subscribe(l: Listener): () => void {
-    listeners.add(l);
-    return () => listeners.delete(l);
   },
 };

@@ -55,6 +55,9 @@ export function ValidationPage(): JSX.Element {
           onFinished={() =>
             void qc.invalidateQueries({ queryKey: qk.automation(projectId) })
           }
+          onRetried={(newJobId) =>
+            setActiveJob((cur) => (cur ? { ...cur, jobId: newJobId } : cur))
+          }
         />
       )}
       <QueryState query={listQuery} loadingLabel="Loading automation…">

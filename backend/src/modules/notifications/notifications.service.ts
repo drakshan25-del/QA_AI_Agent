@@ -49,9 +49,13 @@ export class NotificationsService {
         }),
       );
       if (input.projectId) {
+        // Delivered only to the recipient's own sockets (FR-V3-ENT-007):
+        // notification content (e.g. failure detail) is per-user, not
+        // project-wide broadcast material.
         this.events.emit({
           type: 'notification.new',
           projectId: input.projectId,
+          userId: input.userId,
           correlationId: input.correlationId,
           payload: {
             id: saved.id,

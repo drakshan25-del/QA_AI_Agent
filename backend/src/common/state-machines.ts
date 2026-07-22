@@ -149,6 +149,9 @@ export function outcomeFromMetrics(metrics: {
 }): Extract<ExecutionStatus, 'passed' | 'failed' | 'partially_passed'> {
   const passed = metrics.passed ?? 0;
   const failed = (metrics.failed ?? 0) + (metrics.errors ?? 0);
+  // No counts at all means nothing verifiably ran — never report a green
+  // run from an empty metrics object (FR-V3-RPT-001 reconciliation).
+  if (passed === 0 && failed === 0) return 'failed';
   if (failed === 0) return 'passed';
   if (passed === 0) return 'failed';
   return 'partially_passed';

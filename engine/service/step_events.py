@@ -17,16 +17,43 @@ with ``-p engine.service.step_events`` (see ``engine/service/execution.py``).
 from __future__ import annotations
 
 import os
+import queue
+import threading
 import time
 
 import httpx
 
 _SINK = os.environ.get("QA_EVENT_SINK", "")
+_SINK_TOKEN = os.environ.get("QA_EVENT_SINK_TOKEN", "")
 _RUN_ID = os.environ.get("QA_RUN_ID", "")
 _SEQ = {"n": 0}
 _T0 = {"t": time.time()}
 
 _SECRET_HINTS = ("password", "passwd", "secret", "token", "credential", "pwd")
+
+# Events are shipped by a daemon sender thread so emit_step never blocks the
+# Playwright dispatch path (a page spamming console errors must not slow the
+# run). The queue is bounded; under backpressure the oldest telemetry is
+# dropped rather than stalling test execution.
+_QUEUE: queue.Queue[dict] = queue.Queue(maxsize=1000)
+_SENDER_STARTED = threading.Event()
+
+
+def _sender_loop() -> None:
+    with httpx.Client(timeout=2.0) as client:
+        while True:
+            body = _QUEUE.get()
+            try:
+                client.post(_SINK, json=body, headers={"X-Engine-Token": _SINK_TOKEN})
+            except Exception:  # pragma: no cover - telemetry must never fail a test
+                pass
+
+
+def _ensure_sender() -> None:
+    if _SENDER_STARTED.is_set():
+        return
+    _SENDER_STARTED.set()
+    threading.Thread(target=_sender_loop, name="qa-step-sender", daemon=True).start()
 
 
 def _redact(action_type: str, target: str, value: str) -> str:
@@ -68,13 +95,26 @@ def emit_step(
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "evidence_uri": evidence_uri,
     }
+    _ensure_sender()
+    body = {"type": "execution.step", "payload": payload}
     try:
-        httpx.post(_SINK, json={"type": "execution.step", "payload": payload}, timeout=2.0)
-    except Exception:  # pragma: no cover - telemetry must never fail a test
-        pass
+        _QUEUE.put_nowait(body)
+    except queue.Full:  # pragma: no cover - drop oldest, keep the run moving
+        try:
+            _QUEUE.get_nowait()
+            _QUEUE.put_nowait(body)
+        except (queue.Empty, queue.Full):
+            pass
 
 
 # --- pytest plugin: test-level status events -------------------------------
+
+
+def pytest_sessionfinish(session, exitstatus):  # noqa: D401
+    """Give the sender thread a bounded window to flush remaining events."""
+    deadline = time.time() + 5.0
+    while not _QUEUE.empty() and time.time() < deadline:
+        time.sleep(0.05)
 
 
 def pytest_runtest_logstart(nodeid, location):  # noqa: D401

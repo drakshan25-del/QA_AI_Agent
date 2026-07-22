@@ -16,6 +16,7 @@ export class FindingsController {
   constructor(private readonly findings: FindingsService) {}
 
   @Post('results/:id/classify')
+  @RequirePermission('generation.run')
   async classify(
     @Param('id') id: string,
     @Body() dto: ClassifyDto,
@@ -43,6 +44,7 @@ export class FindingsController {
   }
 
   @Post('findings/:id/defect-draft')
+  @RequirePermission('generation.run')
   async defectDraft(
     @Param('id') id: string,
     @CurrentUser() user: AuthUser,

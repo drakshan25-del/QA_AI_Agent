@@ -22,6 +22,12 @@ export function useProjectEvents(
       if (!projectId) return;
       const invalidate = (key: unknown[]) =>
         void qc.invalidateQueries({ queryKey: key });
+      // The bare project key is a PREFIX of every project-scoped query;
+      // invalidating it non-exactly refetches documents, plans, cases,
+      // coverage and more on every envelope. Only the project detail
+      // (workflow summary) should refresh — exact match.
+      const invalidateProjectDetail = () =>
+        void qc.invalidateQueries({ queryKey: ['projects', projectId], exact: true });
 
       switch (envelope.type) {
         case 'analysis.ready':
@@ -42,14 +48,18 @@ export function useProjectEvents(
           invalidate(['projects', projectId, 'test-plans']);
           invalidate(['projects', projectId, 'test-cases']);
           invalidate(['projects', projectId, 'automation']);
-          invalidate(['projects', projectId]);
+          invalidateProjectDetail();
           break;
         case 'job.completed':
         case 'job.failed':
         case 'job.cancelled':
-        case 'job.progress':
           invalidate(['projects', projectId, 'jobs']);
-          invalidate(['projects', projectId]);
+          invalidateProjectDetail();
+          break;
+        case 'job.progress':
+          // Progress ticks arrive many times a minute; they change nothing
+          // except the jobs list — never fan out wider (no refetch storm).
+          invalidate(['projects', projectId, 'jobs']);
           break;
         case 'notification.new':
           invalidate(['notifications']);

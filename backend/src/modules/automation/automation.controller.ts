@@ -5,12 +5,16 @@ import {
   Headers,
   HttpCode,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AutomationService } from './automation.service';
-import { GenerateAutomationDto } from './dto/automation.dto';
+import {
+  GenerateAutomationDto,
+  UpdateAutomationDto,
+} from './dto/automation.dto';
 import { ApprovalDto } from '../approvals/dto/approval.dto';
 import {
   AuthUser,
@@ -58,6 +62,19 @@ export class AutomationController {
   @Get('automation/:id')
   async get(@Param('id') id: string, @CurrentUser() user: AuthUser) {
     return this.automation.getOne(id, user);
+  }
+
+  /** Save an in-place edit of the generated script (AC-004). Editing resets
+   * validation and reopens the approval gate (FR-VAL-007). */
+  @Patch('automation/:id')
+  @RequirePermission('artefact.edit')
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateAutomationDto,
+    @CurrentUser() user: AuthUser,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.automation.updateContent(id, dto.content, user, correlationId);
   }
 
   /** Async validation job with live logs (FR-V3-LOG-005) → 202 {jobId}. */

@@ -65,7 +65,7 @@ def check_syntax(code: str, filename: str) -> list[ValidationIssue]:
 # FR-VAL-003 / SEC-005: forbidden constructs
 # ---------------------------------------------------------------------------
 
-_FORBIDDEN_MODULES = {"subprocess", "socket", "ctypes"}
+_FORBIDDEN_MODULES = {"subprocess", "socket", "ctypes", "importlib", "runpy", "multiprocessing"}
 
 # Fully-qualified callables that must never appear in generated tests.
 _FORBIDDEN_CALLS = {
@@ -83,7 +83,32 @@ _FORBIDDEN_CALLS = {
 _FORBIDDEN_BUILTINS = {
     "eval": "eval() executes dynamic code",
     "exec": "exec() executes dynamic code",
+    "compile": "compile() builds dynamic code objects",
     "__import__": "__import__ enables dynamic module loading",
+    # Dynamic attribute access defeats the static call analysis (e.g.
+    # getattr(os, 'sys' + 'tem')), so it is not allowed in generated tests.
+    "getattr": "getattr() enables dynamic attribute access that bypasses static checks",
+    "setattr": "setattr() enables dynamic attribute mutation",
+    "delattr": "delattr() enables dynamic attribute deletion",
+    "globals": "globals() exposes the module namespace for dynamic access",
+    "locals": "locals() exposes the local namespace for dynamic access",
+    "vars": "vars() exposes object namespaces for dynamic access",
+}
+
+# Filesystem-mutating methods flagged on ANY receiver: a static gate cannot
+# resolve `Path("/etc/x").write_text(...)` (the receiver is a call result),
+# so these method names are refused outright in generated tests (SEC-005).
+_FORBIDDEN_METHODS = {
+    "write_text": "Path.write_text writes files outside the open() sandbox check",
+    "write_bytes": "Path.write_bytes writes files outside the open() sandbox check",
+    "unlink": "unlink deletes files",
+    "rmdir": "rmdir deletes directories",
+    "rename": "rename moves files on disk",
+    "replace": "replace overwrites files on disk",
+    "chmod": "chmod changes file permissions",
+    "symlink_to": "symlink_to creates filesystem links",
+    "hardlink_to": "hardlink_to creates filesystem links",
+    "rmtree": "recursive directory deletion is forbidden",
 }
 
 # Directories generated code may legitimately write into (FR-VAL-003).
@@ -109,6 +134,11 @@ _FALLBACK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bctypes\b"), "ctypes enables arbitrary native calls"),
     (re.compile(r"\bpickle\.loads?\s*\("), "pickle deserialisation is forbidden"),
     (re.compile(r"\b__import__\s*\("), "__import__ enables dynamic module loading"),
+    (re.compile(r"\bimportlib\b"), "importlib enables dynamic module loading"),
+    (re.compile(r"\bgetattr\s*\("), "getattr() enables dynamic attribute access"),
+    (re.compile(r"\.write_(?:text|bytes)\s*\("), "Path write methods are forbidden"),
+    (re.compile(r"\.(?:unlink|rmdir|rename|replace|chmod|symlink_to|hardlink_to)\s*\("),
+     "filesystem mutation methods are forbidden"),
 ]
 
 
@@ -229,13 +259,31 @@ class _ForbiddenVisitor(ast.NodeVisitor):
             self._add(f"call into forbidden module '{name.split('.')[0]}'", node)
         elif name in {"open", "io.open"}:
             self._check_open(node)
+        elif isinstance(node.func, ast.Attribute) and node.func.attr in _FORBIDDEN_METHODS:
+            # Catches receivers the resolver cannot name, e.g. Path(...).write_text.
+            self._add(_FORBIDDEN_METHODS[node.func.attr], node)
+        elif isinstance(node.func, ast.Attribute) and node.func.attr == "open" and not name:
+            # Path(...).open(mode) — same sandbox rules as builtin open();
+            # the mode is the first positional argument for the method form.
+            self._check_open(node, mode_arg_index=0, path_from_receiver=True)
         self.generic_visit(node)
 
-    def _check_open(self, node: ast.Call) -> None:
-        """Flag write-mode open() targeting paths outside the sandbox dirs."""
+    def _check_open(
+        self,
+        node: ast.Call,
+        *,
+        mode_arg_index: int = 1,
+        path_from_receiver: bool = False,
+    ) -> None:
+        """Flag write-mode open() targeting paths outside the sandbox dirs.
+
+        Handles both the builtin form ``open(path, mode)`` and the method
+        form ``Path(...).open(mode)`` (``mode_arg_index=0``, path taken from
+        the receiver expression, which is dynamic by definition).
+        """
         mode: str | None = "r"
-        if len(node.args) >= 2:
-            arg = node.args[1]
+        if len(node.args) > mode_arg_index:
+            arg = node.args[mode_arg_index]
             mode = arg.value if isinstance(arg, ast.Constant) and isinstance(arg.value, str) else None
         for kw in node.keywords:
             if kw.arg == "mode":
@@ -246,7 +294,7 @@ class _ForbiddenVisitor(ast.NodeVisitor):
             return
         if not _WRITE_MODE_CHARS.intersection(mode):
             return  # read-only open is fine
-        target = node.args[0] if node.args else None
+        target = None if path_from_receiver else (node.args[0] if node.args else None)
         if isinstance(target, ast.Constant) and isinstance(target.value, str):
             if not _write_path_allowed(target.value):
                 self._add(

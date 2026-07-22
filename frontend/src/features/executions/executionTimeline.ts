@@ -72,12 +72,21 @@ function coerceStepStatus(s: unknown): StepStatus {
   return STEP_STATUSES.includes(s as StepStatus) ? (s as StepStatus) : 'running';
 }
 
+// Full §23.7 state machine plus the engine's raw payload vocabulary
+// (completed/error) — a terminal envelope must never be discarded, or the
+// reducer's runStatus sticks at 'running' forever.
 const RUN_STATUSES: ExecutionStatus[] = [
   'queued',
+  'preparing',
   'running',
+  'stopping',
+  'passed',
+  'failed',
+  'partially_passed',
+  'cancelled',
+  'timed_out',
   'completed',
   'error',
-  'cancelled',
 ];
 function coerceRunStatus(s: unknown, fallback: ExecutionStatus): ExecutionStatus {
   return RUN_STATUSES.includes(s as ExecutionStatus) ? (s as ExecutionStatus) : fallback;
@@ -108,6 +117,13 @@ function applyStep(state: TimelineState, envelope: EventEnvelope): TimelineState
   if (existingIdx >= 0) {
     steps = state.steps.slice();
     steps[existingIdx] = step;
+  } else if (
+    state.steps.length === 0 ||
+    step.seq > state.steps[state.steps.length - 1]!.seq
+  ) {
+    // Live events arrive in seq order — plain append, no O(n log n) sort
+    // per event on the hot streaming path.
+    steps = [...state.steps, step];
   } else {
     steps = [...state.steps, step].sort((a, b) => a.seq - b.seq);
   }

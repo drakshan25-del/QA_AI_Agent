@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { TimelineState, TimelineStep } from './executionTimeline';
 import { plainLabel } from './stepLabels';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -20,7 +20,10 @@ const markerGlyph: Record<string, string> = {
   skipped: '–',
 };
 
-function StepRow({ step }: { step: TimelineStep }): JSX.Element {
+// Memoised: on the live page every incoming event re-renders the timeline;
+// existing rows have stable `step` object identities (the reducer only
+// appends/replaces), so memo() limits reconciliation to the changed row.
+const StepRow = memo(function StepRow({ step }: { step: TimelineStep }): JSX.Element {
   const [open, setOpen] = useState(false);
   // valueSummary is already redacted by the backend (FR-EXE-008); we still label
   // it as masked so reviewers know a secret value is not shown in the clear.
@@ -65,7 +68,7 @@ function StepRow({ step }: { step: TimelineStep }): JSX.Element {
       </div>
     </div>
   );
-}
+});
 
 export interface TimelineFilter {
   /** Only show steps with this status (running/passed/failed/skipped). */

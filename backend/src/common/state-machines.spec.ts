@@ -77,6 +77,12 @@ describe('V3 state machines (§23.7)', () => {
     expect(outcomeFromMetrics({ passed: 2, failed: 1 })).toBe('partially_passed');
     expect(outcomeFromMetrics({ passed: 2, errors: 1 })).toBe('partially_passed');
   });
+
+  it('never reports green from empty/missing metrics (no false pass)', () => {
+    expect(outcomeFromMetrics({})).toBe('failed');
+    expect(outcomeFromMetrics({ total: 0 })).toBe('failed');
+    expect(outcomeFromMetrics({ passed: 0, failed: 0 })).toBe('failed');
+  });
 });
 
 describe('TC-{int} identifiers (FR-V3-TC-001/004)', () => {

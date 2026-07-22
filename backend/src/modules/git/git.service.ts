@@ -4,14 +4,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { execFileSync } from 'child_process';
 import { promises as fs } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, sep } from 'path';
 import { GeneratedArtifact, Project } from '../../entities';
 import { AuthUser } from '../../common/decorators';
 import {
   ConflictAppException,
   NotFoundAppException,
+  ValidationFailedException,
 } from '../../common/errors';
-import { AppConfig } from '../../config/configuration';
 import { AuditService } from '../audit/audit.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { GitCommitDto } from './dto/git.dto';
@@ -106,8 +106,18 @@ export class GitService {
     const workspace = join(uploadDir, 'git', projectId);
     await fs.mkdir(workspace, { recursive: true });
 
+    // Artifact paths originate from engine (LLM) output and are untrusted:
+    // every write must resolve inside the per-project workspace (SEC-005,
+    // SRS §13.1 — tool parameters validated independently of model output).
+    const workspaceRoot = resolve(workspace);
     for (const a of arts) {
-      const filePath = join(workspace, a.path);
+      const filePath = resolve(workspaceRoot, a.path);
+      if (filePath !== workspaceRoot && !filePath.startsWith(workspaceRoot + sep)) {
+        throw new ValidationFailedException(
+          `Artifact path '${a.path}' escapes the project git workspace`,
+          { artifactId: a.id },
+        );
+      }
       await fs.mkdir(dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, a.content, 'utf8');
     }
@@ -154,9 +164,5 @@ export class GitService {
     } catch {
       return false;
     }
-  }
-
-  hasGithubToken(): boolean {
-    return !!this.config.get<AppConfig['githubToken']>('githubToken');
   }
 }

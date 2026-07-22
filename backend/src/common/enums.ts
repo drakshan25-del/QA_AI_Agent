@@ -23,6 +23,19 @@ export const ROLES = [
 ] as const;
 export type Role = (typeof ROLES)[number];
 
+/**
+ * Roles obtainable through unauthenticated self-registration (SEC-001,
+ * least privilege). Privileged roles — admin, qa_lead, supervisor, devops —
+ * can only be granted by an administrator, never claimed at sign-up.
+ */
+export const SELF_REGISTER_ROLES = [
+  'qa_engineer',
+  'automation_engineer',
+  'developer',
+  'reviewer',
+  'viewer',
+] as const;
+
 /** Document categories (V2_CONTRACT §2 Documents). */
 export const DOCUMENT_CATEGORIES = [
   'user_story',

@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../../components/ui/Button';
-import { toDisplayString } from '../../lib/sanitize';
 import { humanCategory } from '../../lib/format';
 import L from '../../styles/layout.module.css';
 
@@ -55,10 +54,18 @@ export function SectionEditor({
   const initial = useMemo(() => toSections(sections), [sections]);
   const [edited, setEdited] = useState<EditableSection[]>(initial);
   const [dirty, setDirty] = useState(false);
+  // Refetches produce a new `sections` object identity even when deep-equal
+  // (live invalidations fire while jobs run). Reseed only when the content
+  // actually changed AND there are no unsaved edits — a reviewer's
+  // in-progress text must never be silently wiped by a background refetch.
+  const contentKey = useMemo(() => JSON.stringify(initial), [initial]);
+  const seededKeyRef = useRef(contentKey);
   useEffect(() => {
+    if (seededKeyRef.current === contentKey) return;
+    if (dirty) return;
+    seededKeyRef.current = contentKey;
     setEdited(initial);
-    setDirty(false);
-  }, [initial]);
+  }, [contentKey, initial, dirty]);
 
   const update = (key: string, text: string) => {
     setEdited((prev) => prev.map((s) => (s.key === key ? { ...s, text } : s)));
@@ -104,27 +111,15 @@ export function SectionEditor({
           variant="primary"
           disabled={disabled || !dirty || saving}
           loading={saving}
-          onClick={() => onSave(fromSections(edited))}
+          onClick={() => {
+            setDirty(false);
+            onSave(fromSections(edited));
+          }}
         >
           Save sections
         </Button>
         {dirty && <span className={L.muted} style={{ marginLeft: 10 }}>Unsaved changes</span>}
       </div>
-    </div>
-  );
-}
-
-export function ReadonlySections({ sections }: { sections: Record<string, unknown> }): JSX.Element {
-  const entries = Object.entries(sections);
-  if (entries.length === 0) return <p className={L.muted}>No sections.</p>;
-  return (
-    <div className={L.stack}>
-      {entries.map(([key, value]) => (
-        <div key={key}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{humanCategory(key)}</div>
-          <div style={{ whiteSpace: 'pre-wrap' }}>{toDisplayString(value)}</div>
-        </div>
-      ))}
     </div>
   );
 }

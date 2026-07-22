@@ -1,5 +1,4 @@
-/// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 // Vite + Vitest config (FR-FE-001). Dev server on :5173 per V2_CONTRACT §7.

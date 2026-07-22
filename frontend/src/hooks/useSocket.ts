@@ -41,17 +41,23 @@ export function useSocket({
       setStatus('disconnected');
       return;
     }
-    const token = tokenStore.get() ?? '';
     const query: Record<string, string> = {};
     if (projectId) query.projectId = projectId;
     if (runId) query.runId = runId;
 
+    // Room scope comes from the handshake query, so each scope needs its own
+    // socket (forceNew) — but auth MUST be a function: socket.io re-invokes it
+    // on every (re)connect, so reconnects after the 15-min access-token
+    // rotation present a fresh JWT instead of replaying the expired one.
+    // The token never goes in the query string (it would end up in proxy and
+    // access logs, SEC-007).
     const socket: Socket = io(config.wsBase, {
       path: '/api/v2/events',
       transports: ['websocket'],
       withCredentials: true,
-      auth: { token },
-      query: { ...query, token },
+      forceNew: true,
+      auth: (cb) => cb({ token: tokenStore.get() ?? '' }),
+      query,
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

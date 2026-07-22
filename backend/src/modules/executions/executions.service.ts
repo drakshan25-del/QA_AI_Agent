@@ -46,6 +46,9 @@ export class ExecutionsService {
   private readonly abortControllers = new Map<string, AbortController>();
   /** Runs currently executing on this host (FR-V3-EXE-012). */
   private readonly activeRuns = new Set<string>();
+  /** Serialises pump passes so two concurrent pumps can never dispatch the
+   * same queued run or under-count `activeRuns` (FR-V3-EXE-012). */
+  private pumpChain: Promise<void> = Promise.resolve();
 
   constructor(
     @InjectRepository(ExecutionRun)
@@ -211,7 +214,12 @@ export class ExecutionsService {
         );
       }
       if (scope !== 'failed') {
-        testPaths = [...testPaths, ...arts.map((a) => a.path)];
+        // Page objects are imported dependencies, not test modules — they are
+        // materialised but never handed to pytest as collection targets.
+        testPaths = [
+          ...testPaths,
+          ...arts.filter((a) => a.kind !== 'page_object').map((a) => a.path),
+        ];
       }
     }
 
@@ -343,8 +351,19 @@ export class ExecutionsService {
       .getCount();
   }
 
-  /** Start queued runs while concurrency slots are available (FR-V3-EXE-012). */
-  private async pump(
+  /** Start queued runs while concurrency slots are available (FR-V3-EXE-012).
+   * Passes are chained: callers may fire-and-forget, but only one pass ever
+   * inspects/mutates `activeRuns` at a time. */
+  private pump(correlationId?: string, idempotencyKey?: string): Promise<void> {
+    this.pumpChain = this.pumpChain
+      .then(() => this.pumpOnce(correlationId, idempotencyKey))
+      .catch((err) =>
+        this.logger.warn(`pump pass failed: ${(err as Error).message}`),
+      );
+    return this.pumpChain;
+  }
+
+  private async pumpOnce(
     correlationId?: string,
     idempotencyKey?: string,
   ): Promise<void> {
@@ -410,10 +429,35 @@ export class ExecutionsService {
       });
       await this.setStatus(run, 'preparing', correlationId);
 
+      // The DB is the artefact store — materialise the approved generated
+      // files into the engine workspace with the run submission, otherwise
+      // pytest is pointed at paths that exist nowhere on disk (AIQA-EXEC-001).
+      // Page objects the tests import are shared dependencies: include every
+      // active page object in the project so imports always resolve.
+      const files: { path: string; content: string }[] = [];
+      const byPath = new Map<string, string>();
+      const addArts = (arts: GeneratedArtifact[]) => {
+        for (const a of arts) {
+          if (a.path && a.content && !byPath.has(a.path)) {
+            byPath.set(a.path, a.content);
+            files.push({ path: a.path, content: a.content });
+          }
+        }
+      };
+      if (run.automationIds?.length) {
+        addArts(await this.artifacts.find({ where: { id: In(run.automationIds) } }));
+      }
+      addArts(
+        await this.artifacts.find({
+          where: { projectId: run.projectId, status: 'active', kind: 'page_object' },
+        }),
+      );
+
       const settings = (run.settings ?? {}) as unknown as EffectiveSettings;
       await this.engine.execute(
         {
           runId: run.id,
+          files,
           testPaths: run.testPaths ?? [],
           browser: run.browser,
           headed: run.headed,
@@ -434,7 +478,12 @@ export class ExecutionsService {
 
       run.startedAt = new Date();
       await this.setStatus(run, 'running', correlationId);
-      await this.consumeStream(run.id, run.projectId, correlationId);
+      await this.consumeStream(
+        run.id,
+        run.projectId,
+        correlationId,
+        settings.timeoutSeconds,
+      );
     } catch (err) {
       this.logger.error(
         `run ${run.id} failed to start: ${(err as Error).message}`,
@@ -459,10 +508,36 @@ export class ExecutionsService {
     runId: string,
     projectId: string,
     correlationId?: string,
+    timeoutSeconds?: number,
   ): Promise<void> {
     const controller = new AbortController();
     this.abortControllers.set(runId, controller);
     const testOutcomes = new Map<string, string>();
+
+    // Backend-side watchdog (NFR-REL-002): the engine enforces its own run
+    // timeout, but if the engine itself stalls or the stream never
+    // terminates, this run must not hold its concurrency slot forever.
+    const watchdogMs = ((timeoutSeconds ?? 900) + 120) * 1000;
+    const watchdog = setTimeout(() => {
+      void (async () => {
+        this.logger.warn(
+          `run ${runId} exceeded ${watchdogMs / 1000}s without terminating; aborting stalled stream`,
+        );
+        try {
+          await this.engine.cancelExecution(runId, correlationId);
+        } catch {
+          // engine unreachable — abort locally regardless
+        }
+        const stalled = await this.runs.findOne({ where: { id: runId } });
+        if (stalled && !isTerminalExecutionStatus(stalled.status)) {
+          stalled.status = 'timed_out';
+          stalled.finishedAt = new Date();
+          await this.runs.save(stalled);
+          this.emitStatus(stalled, correlationId);
+        }
+        controller.abort();
+      })();
+    }, watchdogMs);
 
     const onEvent = async (evt: EngineSseEvent) => {
       const type =
@@ -526,6 +601,7 @@ export class ExecutionsService {
         `event stream for run ${runId} ended with error: ${(err as Error).message}`,
       );
     } finally {
+      clearTimeout(watchdog);
       this.abortControllers.delete(runId);
       await this.finalize(runId, testOutcomes, correlationId);
       this.activeRuns.delete(runId);
@@ -542,7 +618,12 @@ export class ExecutionsService {
     const run = await this.runs.findOne({ where: { id: runId } });
     if (!run || isTerminalExecutionStatus(run.status)) return;
 
-    if (engineStatus === 'completed' || engineStatus === 'error' || engineStatus === 'cancelled') {
+    if (
+      engineStatus === 'completed' ||
+      engineStatus === 'error' ||
+      engineStatus === 'cancelled' ||
+      engineStatus === 'timed_out'
+    ) {
       const metrics = (payload.metrics as Record<string, number>) || undefined;
       run.metrics = (payload.metrics as Record<string, unknown>) || run.metrics;
       run.finishedAt = new Date();
@@ -550,9 +631,11 @@ export class ExecutionsService {
       run.status =
         engineStatus === 'cancelled'
           ? 'cancelled'
-          : engineStatus === 'error'
-            ? 'failed'
-            : outcomeFromMetrics(metrics ?? (run.metrics as never) ?? {});
+          : engineStatus === 'timed_out'
+            ? 'timed_out'
+            : engineStatus === 'error'
+              ? 'failed'
+              : outcomeFromMetrics(metrics ?? (run.metrics as never) ?? {});
       await this.runs.save(run);
       this.emitStatus(run, correlationId, { metrics: run.metrics });
     } else if (engineStatus === 'running' && ['queued', 'preparing'].includes(run.status)) {
@@ -632,14 +715,23 @@ export class ExecutionsService {
     user: AuthUser,
     fromSeq = 0,
   ): Promise<ExecutionEvent[]> {
-    await this.getOne(id, user);
-    return this.execEvents.find({
+    const run = await this.getOne(id, user);
+    const events = await this.execEvents.find({
       where: {
         executionRunId: id,
         ...(fromSeq ? { seq: MoreThan(fromSeq) } : {}),
       },
       order: { seq: 'ASC' },
+      // Bounded response; clients page through long runs with ?fromSeq=
+      // (same pattern as job logs).
+      take: 5000,
     });
+    // After a backend restart the in-memory seq counter starts over; prime it
+    // from the persisted stream so live envelopes never reuse a seq that a
+    // client already saw (FR-BE-004 reconnect resume).
+    const last = events[events.length - 1];
+    if (last) this.events.primeSeq(run.projectId, id, last.seq);
+    return events;
   }
 
   /** Stop control (FR-V3-EXE-008): safe cancellation with evidence retained. */

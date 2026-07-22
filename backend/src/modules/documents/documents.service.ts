@@ -9,7 +9,6 @@ import { DocumentCategory } from '../../common/enums';
 import { AuthUser } from '../../common/decorators';
 import { NotFoundAppException } from '../../common/errors';
 import { contentHash } from '../../common/hash';
-import { AppConfig } from '../../config/configuration';
 import { AuditService } from '../audit/audit.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient } from '../../engine/engine.client';
@@ -175,7 +174,7 @@ export class DocumentsService {
     try {
       const dir = join(this.uploadDir, 'documents', projectId);
       await fs.mkdir(dir, { recursive: true });
-      const safe = `${Date.now()}-${file.originalname.replace(/[^\w.\-]/g, '_')}`;
+      const safe = `${Date.now()}-${file.originalname.replace(/[^\w.-]/g, '_')}`;
       const path = join(dir, safe);
       await fs.writeFile(path, file.buffer);
       return path;

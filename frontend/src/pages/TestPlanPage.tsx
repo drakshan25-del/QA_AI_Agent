@@ -233,6 +233,7 @@ export function TestPlanPage(): JSX.Element {
         <LiveJobConsole
           projectId={projectId}
           jobId={activeJobId}
+          onRetried={setActiveJobId}
           title="Generating test plan"
           onFinished={invalidate}
         />

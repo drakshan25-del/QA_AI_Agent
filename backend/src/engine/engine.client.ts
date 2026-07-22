@@ -203,7 +203,10 @@ export class EngineClient {
   async execute(
     body: {
       runId: string;
-      files?: string[];
+      /** Approved generated files to materialise in the engine workspace
+       * before the run (path + content) — DB is the artefact store, the
+       * engine filesystem is not (FR-V3-ENT-005). */
+      files?: { path: string; content: string }[];
       testPaths?: string[];
       browser?: string;
       headed?: boolean;
@@ -223,6 +226,15 @@ export class EngineClient {
     idempotencyKey?: string,
   ): Promise<{ runId: string; status: string; eventsUrl: string }> {
     return this.post('/execute', body, correlationId, idempotencyKey);
+  }
+
+  /** Render HTML to a real PDF via the engine's headless Chromium
+   * (FR-REP-003/FR-V3-RPT-005). */
+  async renderPdf(
+    html: string,
+    correlationId?: string,
+  ): Promise<{ pdfBase64: string }> {
+    return this.post('/render-pdf', { html }, correlationId);
   }
 
   async cancelExecution(

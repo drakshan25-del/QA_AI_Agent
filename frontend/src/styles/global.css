@@ -155,3 +155,45 @@ table {
   border-collapse: collapse;
   width: 100%;
 }
+
+/* Editable code editor (CodeEditor.tsx) — Prism token colours for both themes.
+   Only class-based token styling; content is tokenised, never injected as HTML. */
+.code-editor-textarea { outline: none; }
+.code-editor .token.comment,
+.code-editor .token.prolog,
+.code-editor .token.doctype,
+.code-editor .token.cdata { color: #6a737d; font-style: italic; }
+.code-editor .token.punctuation { color: #6a737d; }
+.code-editor .token.string,
+.code-editor .token.char,
+.code-editor .token.attr-value { color: #032f62; }
+.code-editor .token.number,
+.code-editor .token.boolean,
+.code-editor .token.constant { color: #005cc5; }
+.code-editor .token.keyword,
+.code-editor .token.operator { color: #d73a49; }
+.code-editor .token.function,
+.code-editor .token.class-name { color: #6f42c1; }
+.code-editor .token.builtin,
+.code-editor .token.tag,
+.code-editor .token.attr-name { color: #22863a; }
+.code-editor .token.decorator { color: #e36209; }
+.code-editor-dark .token.comment,
+.code-editor-dark .token.prolog,
+.code-editor-dark .token.doctype,
+.code-editor-dark .token.cdata { color: #8b949e; }
+.code-editor-dark .token.punctuation { color: #8b949e; }
+.code-editor-dark .token.string,
+.code-editor-dark .token.char,
+.code-editor-dark .token.attr-value { color: #a5d6ff; }
+.code-editor-dark .token.number,
+.code-editor-dark .token.boolean,
+.code-editor-dark .token.constant { color: #79c0ff; }
+.code-editor-dark .token.keyword,
+.code-editor-dark .token.operator { color: #ff7b72; }
+.code-editor-dark .token.function,
+.code-editor-dark .token.class-name { color: #d2a8ff; }
+.code-editor-dark .token.builtin,
+.code-editor-dark .token.tag,
+.code-editor-dark .token.attr-name { color: #7ee787; }
+.code-editor-dark .token.decorator { color: #ffa657; }

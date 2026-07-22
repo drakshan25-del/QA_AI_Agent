@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { LiveJobConsole } from '../components/LiveJobConsole';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { FullPageSpinner } from '../components/ui/Spinner';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
@@ -54,9 +55,9 @@ export function ExecutionReportPage(): JSX.Element {
         title="Execution report"
         subtitle={<span className={L.mono}>run {id.slice(0, 8)}</span>}
         actions={
-          <Link to={`/executions/${id}`}>
-            <Button variant="ghost">Back to timeline</Button>
-          </Link>
+          <LinkButton variant="ghost" to={`/executions/${id}`}>
+            Back to timeline
+          </LinkButton>
         }
       />
 
@@ -66,6 +67,7 @@ export function ExecutionReportPage(): JSX.Element {
         <LiveJobConsole
           projectId={projectId}
           jobId={activeJobId}
+          onRetried={setActiveJobId}
           title="Generating execution report"
           onFinished={() =>
             void qc.invalidateQueries({ queryKey: qk.executionReport(id) })

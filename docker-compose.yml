@@ -22,6 +22,7 @@ services:
 
   engine:
     build: { context: ., dockerfile: engine/Dockerfile }
+    restart: unless-stopped
     environment:
       ENGINE_PORT: "8100"
       ENGINE_TOKEN: ${ENGINE_TOKEN:-dev-engine-token}
@@ -29,11 +30,19 @@ services:
       QA_LLM_MODEL: ${QA_LLM_MODEL:-qwen2.5:latest}
     ports: ["8100:8100"]
     extra_hosts: ["host.docker.internal:host-gateway"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/internal/v1/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   backend:
     build: { context: ./backend }
+    restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
+      engine: { condition: service_healthy }
     environment:
       PORT: "4000"
       DB_DRIVER: postgres
@@ -46,10 +55,18 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-admin}
     ports: ["4000:4000"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/v2/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
 
   frontend:
     build: { context: ./frontend }
-    depends_on: [backend]
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_healthy }
     environment:
       VITE_API_BASE: http://localhost:4000/api/v2
       VITE_WS_BASE: ws://localhost:4000

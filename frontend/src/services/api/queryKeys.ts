@@ -2,7 +2,6 @@ import type { TestCaseFilter, AuditFilter } from './endpoints';
 
 /** Centralised react-query keys so invalidation stays consistent. */
 export const qk = {
-  me: ['me'] as const,
   health: ['health'] as const,
   projects: ['projects'] as const,
   project: (id: string) => ['projects', id] as const,

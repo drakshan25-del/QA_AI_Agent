@@ -45,8 +45,16 @@ export function NotificationBell(): JSX.Element {
         setOpen(false);
       }
     };
+    // Keyboard users must be able to dismiss the panel (FR-V3-ENT-016).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
     document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const unread = countQuery.data ?? 0;
@@ -94,7 +102,7 @@ export function NotificationBell(): JSX.Element {
 
       {open && (
         <div
-          role="menu"
+          role="region"
           aria-label="Notifications"
           style={{
             position: 'absolute',
@@ -168,6 +176,11 @@ export function NotificationBell(): JSX.Element {
             )}
             {listQuery.isLoading && (
               <li style={{ padding: 16, opacity: 0.7 }}>Loading…</li>
+            )}
+            {listQuery.isError && (
+              <li style={{ padding: 16, color: 'var(--danger, #f85149)' }}>
+                Could not load notifications — please retry.
+              </li>
             )}
           </ul>
         </div>

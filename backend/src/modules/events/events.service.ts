@@ -8,6 +8,9 @@ export interface EventEnvelope {
   projectId: string;
   runId?: string;
   jobId?: string;
+  /** When set, the envelope is delivered ONLY to this user's sockets
+   * (per-recipient notifications, FR-V3-ENT-007) — never to project rooms. */
+  userId?: string;
   seq: number;
   ts: string;
   payload: Record<string, unknown>;
@@ -18,6 +21,7 @@ export interface EmitInput {
   projectId: string;
   runId?: string;
   jobId?: string;
+  userId?: string;
   correlationId?: string;
   payload: Record<string, unknown>;
 }
@@ -70,6 +74,7 @@ export class EventsService {
       projectId: input.projectId,
       runId: input.runId,
       jobId: input.jobId,
+      userId: input.userId,
       seq,
       ts: new Date().toISOString(),
       payload: input.payload,

@@ -1,16 +1,15 @@
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useProjectId } from '../features/projects/hooks';
-import { ciApi, projectsApi } from '../services/api/endpoints';
+import { ciApi, executionsApi, projectsApi } from '../services/api/endpoints';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { qk } from '../services/api/queryKeys';
-import type { ExecutionRun } from '../services/api/types';
 import { formatRelative } from '../lib/format';
 import ui from '../components/ui/ui.module.css';
 import L from '../styles/layout.module.css';
@@ -156,9 +155,11 @@ function CiPanel({ projectId }: { projectId: string }): JSX.Element {
 
 export function ProjectReportsPage(): JSX.Element {
   const projectId = useProjectId();
-  const exportQuery = useQuery({
-    queryKey: [...qk.project(projectId), 'export'],
-    queryFn: () => projectsApi.exportProject(projectId),
+  // Purpose-built list endpoint — the full project export (documents, plans,
+  // cases, artifacts…) is far too heavy just to render the runs table.
+  const executionsQuery = useQuery({
+    queryKey: [...qk.project(projectId), 'executions'],
+    queryFn: () => executionsApi.listByProject(projectId),
     enabled: !!projectId,
   });
 
@@ -169,9 +170,9 @@ export function ProjectReportsPage(): JSX.Element {
       <CiPanel projectId={projectId} />
 
       <Card title="Executions">
-        <QueryState query={exportQuery} loadingLabel="Loading executions…">
+        <QueryState query={executionsQuery} loadingLabel="Loading executions…">
           {(data) => {
-            const executions = ((data as { executions?: ExecutionRun[] }).executions ?? [])
+            const executions = (data ?? [])
               .slice()
               .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
             if (executions.length === 0) {
@@ -218,14 +219,12 @@ export function ProjectReportsPage(): JSX.Element {
                         <td className={L.muted}>{formatRelative(e.startedAt ?? e.createdAt)}</td>
                         <td>
                           <div className={L.row}>
-                            <Link to={`/executions/${e.id}`}>
-                              <Button small variant="ghost">
-                                Timeline
-                              </Button>
-                            </Link>
-                            <Link to={`/executions/${e.id}/report`}>
-                              <Button small>Report</Button>
-                            </Link>
+                            <LinkButton small variant="ghost" to={`/executions/${e.id}`}>
+                              Timeline
+                            </LinkButton>
+                            <LinkButton small to={`/executions/${e.id}/report`}>
+                              Report
+                            </LinkButton>
                           </div>
                         </td>
                       </tr>

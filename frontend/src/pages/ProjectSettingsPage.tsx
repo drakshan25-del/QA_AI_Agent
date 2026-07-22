@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
@@ -24,6 +25,14 @@ export function ProjectSettingsPage(): JSX.Element {
       void qc.invalidateQueries({ queryKey: qk.projects });
     },
   });
+
+  // The success banner should confirm, not persist forever.
+  const { isSuccess, reset } = mutation;
+  useEffect(() => {
+    if (!isSuccess) return;
+    const t = setTimeout(() => reset(), 4000);
+    return () => clearTimeout(t);
+  }, [isSuccess, reset]);
 
   return (
     <div className={L.stack}>
@@ -77,7 +86,10 @@ export function ProjectSettingsPage(): JSX.Element {
                 <Banner kind="success">Settings saved.</Banner>
               )}
               <div style={{ marginTop: 12 }}>
+                {/* Keyed by project: navigating between projects' settings
+                    must remount the form, never show or save stale values. */}
                 <ProjectForm
+                  key={project.id}
                   submitLabel="Save changes"
                   submitting={mutation.isPending}
                   initial={{

@@ -213,6 +213,85 @@ export class AutomationService {
     return art;
   }
 
+  /**
+   * Save an in-place edit of a generated script (editable code editor).
+   *
+   * The edited code is untrusted until re-checked, so saving resets the
+   * artefact to Draft: validation returns to `pending` and any prior approval
+   * is invalidated (FR-VAL-007 — a change to generated code requires
+   * revalidation and reapproval before it can execute). The content hash is
+   * recomputed and the version incremented so the latest edit is the one that
+   * materialises at execution time (AC-004/AC-005). A no-op edit (identical
+   * content) is returned unchanged so re-saving does not churn the version.
+   */
+  async updateContent(
+    id: string,
+    content: string,
+    user: AuthUser,
+    correlationId?: string,
+  ): Promise<GeneratedArtifact> {
+    const art = await this.getOne(id, user);
+    if (art.status !== 'active') {
+      throw new ConflictAppException(
+        `Automation ${id} is ${art.status} and cannot be edited.`,
+        'invalid_state_transition',
+        { artifactId: id, status: art.status },
+      );
+    }
+    if (content === art.content) {
+      return art; // nothing changed — do not bump version or invalidate
+    }
+
+    // Persist the new content first; edited code is unvalidated again
+    // (FR-VAL-007). Approval invalidation is delegated to the canonical
+    // upstream-modified path below, which reads the freshly-saved row.
+    art.content = content;
+    art.contentHash = contentHash(content);
+    art.version += 1;
+    art.diff = '';
+    art.validationStatus = 'pending';
+    art.validationReport = null;
+    await this.artifacts.save(art);
+
+    // If it had been approved, reopen the approval gate, mark prior approval
+    // records invalidated and emit approval.updated (mirrors any upstream
+    // change to generated code, FR-VAL-007).
+    await this.approvals.onUpstreamModified(
+      'automation',
+      id,
+      user,
+      correlationId,
+    );
+
+    const updated = await this.getOne(id, user);
+
+    await this.audit.record({
+      actor: user.email,
+      actorId: user.id,
+      action: 'automation.edit',
+      resourceType: 'automation',
+      resourceId: id,
+      projectId: updated.projectId,
+      correlationId,
+      metadata: {
+        version: updated.version,
+        contentHash: updated.contentHash,
+        revalidationRequired: true,
+        approvalInvalidated: updated.approvalInvalidated,
+      },
+    });
+
+    // Nudge any open Automation pages to refetch (FR-BE-004).
+    this.events.emit({
+      type: 'automation.ready',
+      projectId: updated.projectId,
+      correlationId,
+      payload: { artifactIds: [id], count: 1, reason: 'edited' },
+    });
+
+    return updated;
+  }
+
   async listByProject(
     projectId: string,
     user: AuthUser,
@@ -407,7 +486,7 @@ export class AutomationService {
     const cases = await this.cases.find({
       where: { id: In(art.testCaseIds ?? []) },
     });
-    return this.engine.executionPlan(
+    const raw = (await this.engine.executionPlan(
       {
         testCases: cases.map((c) => ({
           id: c.id,
@@ -419,6 +498,23 @@ export class AutomationService {
         baseUrl: project?.baseUrl || '',
       },
       correlationId,
-    );
+    )) as { schema_version?: string; plans?: Record<string, unknown>[] };
+
+    // Normalise the engine's snake_case wire format to the API contract's
+    // camelCase (AIQA-EXEC-004: the raw pass-through crashed the frontend,
+    // which reads plan.testCaseId / step.actionType).
+    const plans = (raw.plans ?? []).map((p) => ({
+      testCaseId: String(p.test_case_id ?? p.testCaseId ?? ''),
+      caseKey: String(p.case_key ?? p.caseKey ?? ''),
+      title: String(p.title ?? ''),
+      steps: ((p.steps as Record<string, unknown>[]) ?? []).map((s) => ({
+        sequence: Number(s.sequence ?? 0),
+        actionType: String(s.action_type ?? s.actionType ?? ''),
+        target: String(s.target ?? ''),
+        description: String(s.description ?? ''),
+        expected: String(s.expected ?? ''),
+      })),
+    }));
+    return { schemaVersion: raw.schema_version ?? 'v1', plans };
   }
 }

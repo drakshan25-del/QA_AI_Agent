@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useBlocker } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { LiveJobConsole } from '../components/LiveJobConsole';
@@ -9,7 +10,7 @@ import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { Tabs } from '../components/ui/Tabs';
-import { LazyCodeViewer } from '../components/LazyCodeViewer';
+import { LazyCodeEditor } from '../components/LazyCodeEditor';
 import { DiffViewer } from '../components/DiffViewer';
 import { ApprovalControls } from '../features/approvals/ApprovalControls';
 import { RunLauncher } from '../features/executions/RunLauncher';
@@ -33,17 +34,21 @@ function ExecutionPlanTab({ artifactId }: { artifactId: string }): JSX.Element {
   return (
     <QueryState query={q} loadingLabel="Loading execution plan…">
       {(plan) =>
-        plan.plans.length === 0 ? (
-          <p className={L.muted}>No execution plan available.</p>
+        (plan.plans ?? []).length === 0 ? (
+          <p className={L.muted}>
+            No execution plan is available yet — it appears once the automation
+            artefact is linked to approved test cases.
+          </p>
         ) : (
           <div className={L.stack}>
-            {plan.plans.map((p) => (
-              <div key={p.testCaseId}>
+            {(plan.plans ?? []).map((p, idx) => (
+              <div key={p.testCaseId || idx}>
                 <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                  Test case {p.testCaseId.slice(0, 8)}
+                  {p.caseKey || `Test case ${(p.testCaseId || '').slice(0, 8)}`}
+                  {p.title ? ` — ${p.title.replace(/^TC-\d+:\s*/, '')}` : ''}
                 </div>
                 <ol style={{ margin: 0, paddingLeft: 18 }}>
-                  {p.steps.map((st) => (
+                  {(p.steps ?? []).map((st) => (
                     <li key={st.sequence} style={{ marginBottom: 4 }}>
                       <StatusBadge status="idle" label={st.actionType} />{' '}
                       <span>{st.description}</span>
@@ -77,10 +82,65 @@ function ArtifactDetail({
   const [validationJobId, setValidationJobId] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
 
+  // Editable code (AC-002) + unsaved-changes tracking (AC-003). `draft` is
+  // the working copy; it is dirty when it diverges from the saved artifact.
+  const [draft, setDraft] = useState(artifact.content);
+  const [savedContent, setSavedContent] = useState(artifact.content);
+  const dirty = draft !== savedContent;
+
+  // A server-side change to the SAME artifact (e.g. regeneration/validation)
+  // updates the baseline only when the user has no unsaved edits, so a
+  // background refetch never silently discards in-progress work.
+  useEffect(() => {
+    if (!dirty && artifact.content !== savedContent) {
+      setSavedContent(artifact.content);
+      setDraft(artifact.content);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifact.content]);
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: qk.automation(projectId) });
     void qc.invalidateQueries({ queryKey: qk.automationItem(artifact.id) });
   };
+
+  const save = useMutation({
+    mutationFn: () => automationApi.update(artifact.id, draft),
+    onSuccess: (updated) => {
+      // Latest saved version replaces the previous (AC-004).
+      setSavedContent(updated.content);
+      setDraft(updated.content);
+      invalidate();
+    },
+  });
+
+  // Warn before leaving with unsaved edits — in-app navigation (AC-003)…
+  const blocker = useBlocker(
+    useCallback(
+      ({ currentLocation, nextLocation }: { currentLocation: { pathname: string }; nextLocation: { pathname: string } }) =>
+        dirty && currentLocation.pathname !== nextLocation.pathname,
+      [dirty],
+    ),
+  );
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    const leave = window.confirm(
+      'You have unsaved changes to the automation code. Leave without saving?',
+    );
+    if (leave) blocker.proceed();
+    else blocker.reset();
+  }, [blocker]);
+
+  // …and hard reload / tab close.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
 
   // Validation is an async job with a live log console (FR-V3-LOG-005).
   const validate = useMutation({
@@ -134,6 +194,7 @@ function ArtifactDetail({
             <LiveJobConsole
               projectId={projectId}
               jobId={validationJobId}
+              onRetried={setValidationJobId}
               title={`Validating ${artifact.path}`}
               onFinished={invalidate}
             />
@@ -202,7 +263,47 @@ function ArtifactDetail({
           />
         </div>
         <div style={{ padding: '0 var(--space) var(--space)' }}>
-          {tab === 'code' && <LazyCodeViewer path={artifact.path} content={artifact.content} />}
+          {tab === 'code' && (
+            <div className={L.stack} style={{ gap: 10 }}>
+              <div className={L.row} style={{ alignItems: 'center' }}>
+                <span className={L.muted} style={{ fontSize: 12 }}>
+                  {dirty ? (
+                    <strong style={{ color: 'var(--warn, #d29922)' }}>
+                      ● Unsaved changes
+                    </strong>
+                  ) : (
+                    'Saved'
+                  )}
+                </span>
+                <div className={L.spacer} />
+                <Button
+                  small
+                  variant="ghost"
+                  disabled={!dirty || save.isPending}
+                  onClick={() => setDraft(savedContent)}
+                >
+                  Revert
+                </Button>
+                <Button
+                  small
+                  variant="primary"
+                  disabled={!dirty}
+                  loading={save.isPending}
+                  onClick={() => save.mutate()}
+                >
+                  Save
+                </Button>
+              </div>
+              {save.isError && <ErrorBanner error={save.error} />}
+              {save.isSuccess && !dirty && (
+                <Banner kind="success">
+                  Code saved (v{artifact.version}). Re-validate and re-approve
+                  before executing (FR-VAL-007).
+                </Banner>
+              )}
+              <LazyCodeEditor path={artifact.path} value={draft} onChange={setDraft} />
+            </div>
+          )}
           {tab === 'diff' && <DiffViewer diff={artifact.diff} />}
           {tab === 'validation' && (
             <ValidationFindings report={artifact.validationReport} status={artifact.validationStatus} />
@@ -301,6 +402,7 @@ export function AutomationPage(): JSX.Element {
           jobId={activeJobId}
           title="Generating Playwright automation"
           onFinished={() => void qc.invalidateQueries({ queryKey: qk.automation(projectId) })}
+          onRetried={setActiveJobId}
         />
       )}
 
@@ -331,7 +433,15 @@ export function AutomationPage(): JSX.Element {
                 {(() => {
                   const selected =
                     artifacts.find((a) => a.id === selectedId) ?? artifacts[0]!;
-                  return <ArtifactDetail artifact={selected} projectId={projectId} />;
+                  // Keyed by artifact so per-file state (active validation
+                  // console, override reason, tab) never leaks across files.
+                  return (
+                    <ArtifactDetail
+                      key={selected.id}
+                      artifact={selected}
+                      projectId={projectId}
+                    />
+                  );
                 })()}
               </div>
             </div>

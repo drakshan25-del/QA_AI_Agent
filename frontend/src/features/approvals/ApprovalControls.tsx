@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui/Button';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { Banner } from '../../components/ui/Banner';
@@ -25,6 +25,16 @@ export function ApprovalControls({
   compact?: boolean;
 }): JSX.Element {
   const [comment, setComment] = useState('');
+  // Track which decision is in flight so only the clicked button spins.
+  const [pending, setPending] = useState<ApprovalDecision | null>(null);
+  useEffect(() => {
+    if (!busy) setPending(null);
+  }, [busy]);
+
+  const decide = (decision: ApprovalDecision) => {
+    setPending(decision);
+    onDecide(decision, comment);
+  };
 
   return (
     <div className={L.stack} style={{ gap: 10 }}>
@@ -59,15 +69,24 @@ export function ApprovalControls({
         <Button
           variant="primary"
           disabled={busy}
-          loading={busy}
-          onClick={() => onDecide('approved', comment)}
+          loading={busy && pending === 'approved'}
+          onClick={() => decide('approved')}
         >
           Approve
         </Button>
-        <Button variant="danger" disabled={busy} onClick={() => onDecide('rejected', comment)}>
+        <Button
+          variant="danger"
+          disabled={busy}
+          loading={busy && pending === 'rejected'}
+          onClick={() => decide('rejected')}
+        >
           Reject
         </Button>
-        <Button disabled={busy} onClick={() => onDecide('regenerate', comment)}>
+        <Button
+          disabled={busy}
+          loading={busy && pending === 'regenerate'}
+          onClick={() => decide('regenerate')}
+        >
           Request regenerate
         </Button>
       </div>

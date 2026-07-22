@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { documentsApi } from '../services/api/endpoints';
@@ -22,13 +23,19 @@ export function DocumentPreviewPage(): JSX.Element {
     enabled: !!id,
   });
 
-  // Local inclusion state, seeded from the server, saved on demand.
+  // Local inclusion state, seeded from the server, saved on demand. Reseed
+  // only for segments not yet tracked — a background refetch must not undo
+  // toggles the user has not saved yet.
   const [included, setIncluded] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (q.data) {
-      const next: Record<string, boolean> = {};
-      for (const seg of q.data.segments) next[seg.id] = seg.inclusionStatus !== 'excluded';
-      setIncluded(next);
+      setIncluded((cur) => {
+        const next = { ...cur };
+        for (const seg of q.data.segments) {
+          if (!(seg.id in next)) next[seg.id] = seg.inclusionStatus !== 'excluded';
+        }
+        return next;
+      });
     }
   }, [q.data]);
 
@@ -64,11 +71,9 @@ export function DocumentPreviewPage(): JSX.Element {
                       status={data.document.parseStatus}
                       label={`parse: ${data.document.parseStatus}`}
                     />
-                    <Link to={`/projects/${data.document.projectId}/upload`}>
-                      <Button small variant="ghost">
-                        Back to uploads
-                      </Button>
-                    </Link>
+                    <LinkButton small variant="ghost" to={`/projects/${data.document.projectId}/upload`}>
+                      Back to uploads
+                    </LinkButton>
                   </div>
                 }
               >

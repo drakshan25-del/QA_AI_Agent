@@ -35,6 +35,11 @@ const nextId = () => `u${Date.now()}_${seq++}`;
 export function useUploadQueue(projectId: string, onUploaded?: () => void) {
   const [items, setItems] = useState<UploadItem[]>([]);
   const controllers = useRef<Map<string, AbortController>>(new Map());
+  // Mirror of `items` for event handlers. Reading queue state by abusing a
+  // setItems updater would run the side effect during render (twice under
+  // StrictMode) and double-POST files.
+  const itemsRef = useRef<UploadItem[]>(items);
+  itemsRef.current = items;
 
   const patch = useCallback((id: string, changes: Partial<UploadItem>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...changes } : it)));
@@ -103,21 +108,19 @@ export function useUploadQueue(projectId: string, onUploaded?: () => void) {
   );
 
   const uploadAll = useCallback(() => {
-    setItems((prev) => {
-      for (const it of prev) {
-        if (it.status === 'queued') void uploadOne(it);
-      }
-      return prev;
-    });
+    for (const it of itemsRef.current) {
+      if (it.status === 'queued') void uploadOne(it);
+    }
   }, [uploadOne]);
 
   const retry = useCallback(
     (id: string) => {
-      setItems((prev) => {
-        const it = prev.find((x) => x.id === id);
-        if (it) void uploadOne(it);
-        return prev;
-      });
+      const it = itemsRef.current.find((x) => x.id === id);
+      // Only failed/cancelled items are retryable — never re-POST an
+      // in-flight or completed upload.
+      if (it && (it.status === 'error' || it.status === 'cancelled')) {
+        void uploadOne(it);
+      }
     },
     [uploadOne],
   );

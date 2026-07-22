@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
+import { LinkButton } from '../components/ui/LinkButton';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { Banner } from '../components/ui/Banner';
 import { useProject, useProjectId } from '../features/projects/hooks';
@@ -86,9 +86,9 @@ export function ProjectOverviewPage(): JSX.Element {
                 actions={
                   <>
                     <StatusBadge status={project.status} />
-                    <Link to={`/projects/${projectId}/upload`}>
-                      <Button variant="primary">Upload sources</Button>
-                    </Link>
+                    <LinkButton variant="primary" to={`/projects/${projectId}/upload`}>
+                      Upload sources
+                    </LinkButton>
                   </>
                 }
               />
@@ -131,6 +131,14 @@ export function ProjectOverviewPage(): JSX.Element {
                 </ol>
               </Card>
 
+              {dashboardQuery.isLoading && (
+                <p className={L.muted}>Loading dashboard…</p>
+              )}
+              {dashboardQuery.isError && (
+                <p style={{ color: 'var(--danger)' }}>
+                  Dashboard data could not be loaded — refresh to retry.
+                </p>
+              )}
               {dashboardQuery.data && (
                 <>
                   <div className={L.statTiles}>

@@ -15,8 +15,10 @@ shell access (FR-ENG-004, SEC-005). Correlation IDs propagate on every call
 from __future__ import annotations
 
 import base64
+import hmac
 import os
 import threading
+import time
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -58,14 +60,19 @@ ENGINE_PORT = int(os.environ.get("ENGINE_PORT", "8100"))
 
 app = FastAPI(title="QA_AI_Agents Engine", version=SCHEMA_VERSION)
 
-_IDEMPOTENCY: dict[str, dict] = {}
+#: Idempotency cache: key → (stored_at, payload). Bounded and time-limited so
+#: a long-lived engine cannot grow it without bound (SEC-012).
+_IDEMPOTENCY: dict[str, tuple[float, dict]] = {}
 _IDEMPOTENCY_LOCK = threading.Lock()
+_IDEMPOTENCY_TTL_SECONDS = 24 * 3600
+_IDEMPOTENCY_MAX_KEYS = 1000
 
 _EXCEL_EXTS = (".xlsx", ".xls")
 
 
 def _auth(token: str | None) -> None:
-    if token != ENGINE_TOKEN:
+    """Constant-time comparison of the shared engine token (SEC-002)."""
+    if token is None or not hmac.compare_digest(token.encode(), ENGINE_TOKEN.encode()):
         raise HTTPException(status_code=401, detail="invalid or missing X-Engine-Token")
 
 
@@ -73,13 +80,29 @@ def _idempotent(key: str | None):
     if not key:
         return None
     with _IDEMPOTENCY_LOCK:
-        return _IDEMPOTENCY.get(key)
+        entry = _IDEMPOTENCY.get(key)
+        if entry is None:
+            return None
+        stored_at, value = entry
+        if time.time() - stored_at > _IDEMPOTENCY_TTL_SECONDS:
+            del _IDEMPOTENCY[key]
+            return None
+        return value
 
 
 def _remember(key: str | None, value: dict) -> None:
-    if key:
-        with _IDEMPOTENCY_LOCK:
-            _IDEMPOTENCY[key] = value
+    if not key:
+        return
+    now = time.time()
+    with _IDEMPOTENCY_LOCK:
+        # Evict expired entries first, then the oldest if still over the cap.
+        expired = [k for k, (t, _) in _IDEMPOTENCY.items() if now - t > _IDEMPOTENCY_TTL_SECONDS]
+        for k in expired:
+            del _IDEMPOTENCY[k]
+        while len(_IDEMPOTENCY) >= _IDEMPOTENCY_MAX_KEYS:
+            oldest = min(_IDEMPOTENCY, key=lambda k: _IDEMPOTENCY[k][0])
+            del _IDEMPOTENCY[oldest]
+        _IDEMPOTENCY[key] = (now, value)
 
 
 # --- health (§17) ----------------------------------------------------------
@@ -166,35 +189,53 @@ def analyse(body: dict = Body(...), x_engine_token: str | None = Header(default=
 
 
 @app.post("/internal/v1/test-plan", response_model=TestPlanOutput)
-def test_plan(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> TestPlanOutput:
+def test_plan(body: dict = Body(...), x_engine_token: str | None = Header(default=None),
+              idempotency_key: str | None = Header(default=None)) -> TestPlanOutput:
     _auth(x_engine_token)
+    cached = _idempotent(idempotency_key)
+    if cached:
+        return TestPlanOutput.model_validate(cached)
     try:
-        return test_plan_agent.generate_test_plan(
+        out = test_plan_agent.generate_test_plan(
             body["projectName"], body.get("baseUrl", ""), body.get("requirements", []),
             body.get("analyses", []), model=body.get("model"), temperature=body.get("temperature"))
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    _remember(idempotency_key, out.model_dump())
+    return out
 
 
 @app.post("/internal/v1/test-cases", response_model=TestCasesOutput)
-def test_cases(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> TestCasesOutput:
+def test_cases(body: dict = Body(...), x_engine_token: str | None = Header(default=None),
+               idempotency_key: str | None = Header(default=None)) -> TestCasesOutput:
     _auth(x_engine_token)
+    cached = _idempotent(idempotency_key)
+    if cached:
+        return TestCasesOutput.model_validate(cached)
     try:
-        return test_case_agent.generate_test_cases(
+        out = test_case_agent.generate_test_cases(
             body["requirement"], body.get("analysis"), min_cases=body.get("minCases", 10),
             model=body.get("model"), temperature=body.get("temperature"))
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    _remember(idempotency_key, out.model_dump())
+    return out
 
 
 @app.post("/internal/v1/automation", response_model=AutomationOutput)
-def automation(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> AutomationOutput:
+def automation(body: dict = Body(...), x_engine_token: str | None = Header(default=None),
+               idempotency_key: str | None = Header(default=None)) -> AutomationOutput:
     _auth(x_engine_token)
+    cached = _idempotent(idempotency_key)
+    if cached:
+        return AutomationOutput.model_validate(cached)
     try:
-        return automation_agent.generate_automation(
+        out = automation_agent.generate_automation(
             body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""))
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    _remember(idempotency_key, out.model_dump())
+    return out
 
 
 # --- validation (FR-VAL) ----------------------------------------------------
@@ -250,6 +291,39 @@ def classify(body: dict = Body(...), x_engine_token: str | None = Header(default
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
+@app.post("/internal/v1/render-pdf")
+def render_pdf(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
+    """Render HTML to a real PDF via headless Chromium (FR-REP-003/FR-V3-RPT-005).
+
+    The backend has no PDF renderer; the engine already ships Playwright, and
+    Chromium's print-to-PDF produces a valid document (AIQA-REPORT-003 — the
+    previous behaviour returned HTML bytes labelled application/pdf, which no
+    PDF viewer can open).
+    """
+    _auth(x_engine_token)
+    html = str(body.get("html") or "")
+    if not html.strip():
+        raise HTTPException(status_code=400, detail="html is required")
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.set_content(html, wait_until="load")
+                pdf_bytes = page.pdf(
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "16mm", "bottom": "16mm", "left": "12mm", "right": "12mm"},
+                )
+            finally:
+                browser.close()
+    except Exception as exc:  # noqa: BLE001 - caller falls back to HTML export
+        raise HTTPException(status_code=503, detail=f"PDF rendering failed: {exc}") from None
+    return {"schema_version": SCHEMA_VERSION, "pdfBase64": base64.b64encode(pdf_bytes).decode()}
+
+
 @app.post("/internal/v1/report")
 def report(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
     _auth(x_engine_token)
@@ -273,14 +347,28 @@ def report(body: dict = Body(...), x_engine_token: str | None = Header(default=N
 def execute(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
     _auth(x_engine_token)
     run_id = body["runId"]
+    # Duplicate submits must not spawn a second, uncancellable subprocess for
+    # the same run (FR-BE-003 idempotency): report the existing run instead.
+    if execution.is_running(run_id):
+        return {"runId": run_id, "status": "running",
+                "eventsUrl": f"/internal/v1/runs/{run_id}/events", "duplicate": True}
     # allowedDomains may arrive as an array (contract §4) or a CSV string
     # (backend project field); normalise to the CSV the runner env expects.
     raw_domains = body.get("allowedDomains", "localhost,127.0.0.1")
     allowed_domains = ",".join(raw_domains) if isinstance(raw_domains, list) else str(raw_domains)
 
+    # `files` carries approved generated code as [{path, content}] to be
+    # materialised in the workspace; plain string entries are treated as
+    # pre-existing test paths (backward compatibility).
+    raw_files = body.get("files") or []
+    file_payloads = [f for f in raw_files if isinstance(f, dict)]
+    legacy_paths = [f for f in raw_files if isinstance(f, str)]
+    test_paths = list(body.get("testPaths") or legacy_paths)
+
     def _run():
         execution.run_execution(
-            run_id, body.get("testPaths") or body.get("files", []),
+            run_id, test_paths,
+            files=file_payloads,
             engine_port=ENGINE_PORT, engine_token=ENGINE_TOKEN,
             browser=body.get("browser", "chromium"), headed=body.get("headed", False),
             environment=body.get("environment", "local"),
@@ -306,10 +394,19 @@ def cancel(run_id: str, x_engine_token: str | None = Header(default=None)) -> di
 
 
 @app.post("/internal/v1/runs/{run_id}/_ingest")
-async def ingest_step(run_id: str, request: Request, token: str = "") -> dict:
-    """Receive a step event from the running pytest process and republish it."""
-    if token != ENGINE_TOKEN:
-        raise HTTPException(status_code=401, detail="invalid token")
+async def ingest_step(
+    run_id: str,
+    request: Request,
+    x_engine_token: str | None = Header(default=None),
+    token: str = "",
+) -> dict:
+    """Receive a step event from the running pytest process and republish it.
+
+    The token travels in the ``X-Engine-Token`` header (the query parameter is
+    accepted for backward compatibility only — headers never end up in access
+    logs, SEC-002/007).
+    """
+    _auth(x_engine_token or token or None)
     event = await request.json()
     eventbus.emit(run_id, event.get("type", "execution.step"), event.get("payload", {}))
     return {"ok": True}

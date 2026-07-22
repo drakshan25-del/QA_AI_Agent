@@ -8,7 +8,7 @@ per-item delete buttons with role ``button`` and accessible name ``Delete``.
 
 from __future__ import annotations
 
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page
 
 from automation.pages.base_page import BasePage
 
@@ -26,9 +26,10 @@ class SampleItemsPage(BasePage):
         self.delete_buttons: Locator = self.by_role("button", name="Delete")
 
     def add_item(self, text: str) -> None:
-        """Type an item into the new-item input and click Add."""
-        self.new_item_input.fill(text)
-        self.add_button.click()
+        """Type an item into the new-item input and click Add (instrumented,
+        FR-EXE-007)."""
+        self.fill(self.new_item_input, text, "new item")
+        self.click(self.add_button, "Add")
 
     def delete_item(self, index: int = 0) -> None:
         """Click the Delete button of the item at ``index``.
@@ -36,14 +37,17 @@ class SampleItemsPage(BasePage):
         Prefer :meth:`delete_item_by_text` where possible — index-based
         selection is order-dependent (see the locator policy, FR-AUT-003).
         """
-        self.delete_buttons.nth(index).click()
+        self.click(self.delete_buttons.nth(index), f"Delete item #{index}")
 
     def delete_item_by_text(self, text: str) -> None:
         """Click the Delete button inside the item containing ``text``.
 
         Text-scoped deletion is stable regardless of list order (FR-AUT-003).
         """
-        self.item_with_text(text).get_by_role("button", name="Delete").click()
+        self.click(
+            self.item_with_text(text).get_by_role("button", name="Delete"),
+            f"Delete '{text}'",
+        )
 
     def item_with_text(self, text: str) -> Locator:
         """Locator for the list item(s) whose text contains ``text``."""
@@ -51,8 +55,8 @@ class SampleItemsPage(BasePage):
 
     def assert_item_present(self, text: str) -> None:
         """Web-first assertion that an item containing ``text`` is visible."""
-        expect(self.item_with_text(text)).to_be_visible()
+        self.assert_visible(self.item_with_text(text))
 
     def assert_item_absent(self, text: str) -> None:
         """Web-first assertion that no item containing ``text`` remains."""
-        expect(self.item_with_text(text)).to_have_count(0)
+        self.assert_count(self.item_with_text(text), 0)

@@ -1,4 +1,9 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import {
+  Navigate,
+  Route,
+  createBrowserRouter,
+  createRoutesFromElements,
+} from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { LoginPage } from './pages/LoginPage';
@@ -20,10 +25,14 @@ import { ProjectReportsPage } from './pages/ProjectReportsPage';
 import { AuditPage } from './pages/AuditPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
-/** Route table (FR-FE-002). All app routes are SPA — no full reload. */
-export function App(): JSX.Element {
-  return (
-    <Routes>
+/**
+ * Route table (FR-FE-002). All app routes are SPA — no full reload. Built as a
+ * data router (createBrowserRouter) so navigation-blocking works (useBlocker),
+ * used to guard unsaved code edits on the Automation page (AC-003).
+ */
+export const router = createBrowserRouter(
+  createRoutesFromElements(
+    <Route>
       <Route path="/login" element={<LoginPage />} />
 
       <Route
@@ -57,6 +66,6 @@ export function App(): JSX.Element {
 
         <Route path="*" element={<NotFoundPage />} />
       </Route>
-    </Routes>
-  );
-}
+    </Route>,
+  ),
+);
