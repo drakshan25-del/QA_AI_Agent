@@ -1,0 +1,110 @@
+id: "01-login"
+title: "User login / authentication"
+user_story: >
+  As a registered member, I want to log in with my email and password so that
+  I can access my member portal, and I want clear feedback when my credentials
+  are wrong.
+project_name: "Sample Member Portal"
+base_url: "http://localhost:8001"
+allowed_domains: ["localhost", "127.0.0.1"]
+
+requirement:
+  id: "REQ-LOGIN"
+  title: "Login authentication"
+  text: >
+    The login page accepts a username and password. On valid credentials the
+    user is taken to the items page and sees a 'Welcome' message. On invalid
+    credentials the user stays on the login page and sees an 'Invalid
+    credentials' message. Credentials are validated server-side.
+  acceptance_criteria:
+    - "Valid credentials redirect to the items page and show a 'Welcome' flash."
+    - "Invalid credentials keep the user on /login and show 'Invalid credentials'."
+    - "Both username and password are required to attempt a login."
+
+expected_test_types: ["UI", "security", "regression"]
+expected_categories: ["positive", "negative", "validation", "boundary", "security"]
+min_cases: 8
+
+coverage_checklist:
+  - id: "valid-login"
+    description: "Successful login with valid credentials shows Welcome and reaches items page."
+    keywords: ["valid", "welcome", "success", "correct"]
+  - id: "invalid-password"
+    description: "Login with a wrong password is rejected with 'Invalid credentials'."
+    keywords: ["invalid", "wrong", "incorrect", "reject"]
+  - id: "empty-fields"
+    description: "Submitting with empty username and/or password is handled (required fields)."
+    keywords: ["empty", "blank", "required", "missing"]
+  - id: "unknown-user"
+    description: "Login with an unregistered username is rejected."
+    keywords: ["unknown", "unregistered", "nonexistent", "does not exist"]
+
+reference_test_cases:
+  - id: "REF-LOGIN-1"
+    case_key: "TC-001"
+    requirement_ids: ["REQ-LOGIN"]
+    title: "Valid login shows welcome message"
+    objective: "Verify a user with valid credentials reaches the items page and sees Welcome."
+    category: "positive"
+    priority: "critical"
+    preconditions: ["The sample app is running", "A valid demo account exists"]
+    test_data: {username: "QA_TEST_USERNAME", password: "QA_TEST_PASSWORD"}
+    steps:
+      - "Open the login page"
+      - "Enter the valid username and password from the credentials fixture"
+      - "Click the Log in button"
+    expected_results:
+      - "The flash message contains 'Welcome'"
+    automation_suitability: "automatable"
+  - id: "REF-LOGIN-2"
+    case_key: "TC-002"
+    requirement_ids: ["REQ-LOGIN"]
+    title: "Invalid password is rejected"
+    objective: "Verify a wrong password keeps the user on login with an error flash."
+    category: "negative"
+    priority: "high"
+    preconditions: ["The sample app is running"]
+    test_data: {username: "QA_TEST_USERNAME", password: "definitely-wrong"}
+    steps:
+      - "Open the login page"
+      - "Enter a valid username and an incorrect password"
+      - "Click the Log in button"
+    expected_results:
+      - "The flash message contains 'Invalid credentials'"
+    automation_suitability: "automatable"
+
+robustness_variants:
+  - id: "paraphrase"
+    kind: "paraphrase"
+    requirement:
+      id: "REQ-LOGIN"
+      title: "Sign-in behaviour"
+      text: >
+        A member signs in using their email and password. When the details are
+        correct they are taken to their items and greeted with 'Welcome'; when the
+        details are wrong they remain on the sign-in page and are told 'Invalid
+        credentials'.
+      acceptance_criteria:
+        - "Correct details reach the items page with a 'Welcome' flash."
+        - "Wrong details stay on /login with 'Invalid credentials'."
+        - "Both fields are needed to sign in."
+  - id: "terse"
+    kind: "terse"
+    requirement:
+      id: "REQ-LOGIN"
+      title: "Login"
+      text: "Login form. Valid creds -> items page + 'Welcome'. Invalid creds -> stay on /login + 'Invalid credentials'. Both fields required."
+      acceptance_criteria:
+        - "Valid -> items + Welcome."
+        - "Invalid -> stay + Invalid credentials."
+  - id: "missing_info"
+    kind: "missing_info"
+    requirement:
+      id: "REQ-LOGIN"
+      title: "Login authentication"
+      text: >
+        Users log in with a username and password. Valid logins reach the items
+        page; invalid logins are rejected and the user stays on the login page.
+      acceptance_criteria:
+        - "Valid credentials log the user in."
+        - "Invalid credentials are rejected."

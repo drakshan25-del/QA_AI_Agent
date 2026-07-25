@@ -65,6 +65,24 @@ def get_chat_model(
     return ChatOllama(**kwargs)
 
 
+def resolve_project_model(project: object | None) -> tuple[str | None, float | None]:
+    """Return ``(model, temperature)`` to use for a project's AI generation.
+
+    Threads the per-project LLM configuration (FR-PROJ) into the agents so every
+    generation for a project uses the model the project was created with. Falls
+    back to ``None`` (i.e. the global ``settings`` defaults) when the project
+    leaves ``llm_model`` unset, preserving prior behaviour for such projects.
+
+    Duck-typed on purpose (reads ``llm_model`` / ``llm_temperature`` attributes)
+    to avoid importing the ORM layer here.
+    """
+    if project is None:
+        return None, None
+    model = (getattr(project, "llm_model", "") or "").strip() or None
+    temperature = getattr(project, "llm_temperature", None)
+    return model, temperature
+
+
 def generation_metadata(model: str | None = None, temperature: float | None = None) -> dict:
     """Metadata recorded with every generation run (NFR-EXP-001)."""
     settings = get_settings()

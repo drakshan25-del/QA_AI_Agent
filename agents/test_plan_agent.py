@@ -114,6 +114,8 @@ def generate_test_plan(
     base_url: str,
     requirements: list[dict],
     analyses: list[dict],
+    model: str | None = None,
+    temperature: float | None = None,
 ) -> TestPlanOutput:
     """Generate a full §8.4 test plan for a project (FR-TP-001, FR-TP-002).
 
@@ -131,9 +133,9 @@ def generate_test_plan(
         RuntimeError: If the model cannot produce a valid structured output
             within ``llm_max_retries`` retries (never returns unvalidated text).
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
-    model = get_chat_model().with_structured_output(TestPlanOutput)
+    chat = get_chat_model(model=model, temperature=temperature).with_structured_output(TestPlanOutput)
     messages = [
         ("system", SYSTEM_PROMPT),
         ("human", _build_user_prompt(project_name, base_url, requirements, analyses)),
@@ -144,7 +146,7 @@ def generate_test_plan(
     for attempt in range(1, attempts + 1):
         started = time.perf_counter()
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             elapsed = time.perf_counter() - started
             if not isinstance(result, TestPlanOutput):
                 raise ValueError("model returned no valid structured output")
@@ -168,7 +170,7 @@ def generate_test_plan(
 
     raise RuntimeError(
         f"Test plan generation failed to produce a valid structured output "
-        f"after {attempts} attempts (model={settings.llm_model}, "
+        f"after {attempts} attempts (model={model or settings.llm_model}, "
         f"prompt={PROMPT_VERSION}). Last error: {last_error}"
     ) from last_error
 

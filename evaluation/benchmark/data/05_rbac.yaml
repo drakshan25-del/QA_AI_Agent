@@ -1,0 +1,59 @@
+id: "05-rbac"
+title: "Role-based access control for admin settings"
+user_story: >
+  As a product owner, I want only admin users to access the organisation
+  settings page so that regular members cannot change billing or security
+  configuration.
+project_name: "Generic SaaS Workspace"
+base_url: "http://localhost:8001"
+allowed_domains: ["localhost", "127.0.0.1"]
+
+requirement:
+  id: "REQ-RBAC"
+  title: "Admin-only settings access"
+  text: >
+    The organisation settings page is restricted to users with the 'admin'
+    role. Members with a non-admin role who navigate to settings receive a 403
+    (or are redirected) and never see admin controls. The restriction is
+    enforced server-side, not only by hiding UI elements. Unauthenticated
+    users are redirected to login.
+  acceptance_criteria:
+    - "An admin can open the settings page and see admin controls."
+    - "A non-admin member is denied access to the settings page (403 or redirect)."
+    - "The restriction is enforced server-side even for direct URL access."
+    - "Unauthenticated users are redirected to login."
+
+expected_test_types: ["UI", "API", "security", "regression"]
+expected_categories: ["positive", "negative", "role_based", "security", "error_handling"]
+min_cases: 10
+
+coverage_checklist:
+  - id: "admin-allowed"
+    description: "Admin role can access settings and see admin controls."
+    keywords: ["admin", "allowed", "access", "settings"]
+  - id: "member-denied"
+    description: "Non-admin member is denied access to settings."
+    keywords: ["member", "denied", "403", "forbidden", "non-admin"]
+  - id: "server-side-enforced"
+    description: "Direct URL access by a non-admin is blocked server-side."
+    keywords: ["direct", "url", "server-side", "api", "enforced"]
+  - id: "unauth-redirect"
+    description: "Unauthenticated user is redirected to login."
+    keywords: ["unauthenticated", "redirect", "login"]
+
+reference_test_cases:
+  - id: "REF-RBAC-1"
+    case_key: "TC-001"
+    requirement_ids: ["REQ-RBAC"]
+    title: "Non-admin is denied access to settings"
+    objective: "Verify a member without the admin role cannot open the settings page."
+    category: "role_based"
+    priority: "critical"
+    preconditions: ["A non-admin member account exists and is logged in"]
+    test_data: {role: "member"}
+    steps:
+      - "Log in as a non-admin member"
+      - "Navigate directly to the organisation settings URL"
+    expected_results:
+      - "Access is denied (403 or redirect) and no admin controls are visible"
+    automation_suitability: "needs_review"

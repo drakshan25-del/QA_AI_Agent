@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m pytest evaluation/tests -q -p no:cacheprovider)"
+    ]
+  }
+}

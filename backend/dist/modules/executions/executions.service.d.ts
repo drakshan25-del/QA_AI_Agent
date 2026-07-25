@@ -1,0 +1,85 @@
+import { ConfigService } from '@nestjs/config';
+import { Repository } from 'typeorm';
+import { ExecutionEvent, ExecutionLogEntry, ExecutionRun, GeneratedArtifact, Project, TestResult } from '../../entities';
+import { AuthUser } from '../../common/decorators';
+import { AuditService } from '../audit/audit.service';
+import { EventsService } from '../events/events.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { MembershipService } from '../../common/access/membership.service';
+import { EngineClient } from '../../engine/engine.client';
+import { CreateExecutionDto } from './dto/execution.dto';
+import { ExecutionLoggerService } from './execution-logger.service';
+export interface EffectiveSettings {
+    timeoutSeconds: number;
+    retries: number;
+    workers: number;
+    slowMoMs: number;
+    screenshotMode: 'on-failure' | 'every-test' | 'off';
+    video: boolean;
+}
+export declare class ExecutionsService {
+    private readonly runs;
+    private readonly execEvents;
+    private readonly results;
+    private readonly artifacts;
+    private readonly projects;
+    private readonly membership;
+    private readonly audit;
+    private readonly events;
+    private readonly notifications;
+    private readonly config;
+    private readonly engine;
+    private readonly execLog;
+    private readonly logger;
+    private readonly abortControllers;
+    private readonly activeRuns;
+    private pumpChain;
+    private readonly runLoggers;
+    private readonly runStreams;
+    constructor(runs: Repository<ExecutionRun>, execEvents: Repository<ExecutionEvent>, results: Repository<TestResult>, artifacts: Repository<GeneratedArtifact>, projects: Repository<Project>, membership: MembershipService, audit: AuditService, events: EventsService, notifications: NotificationsService, config: ConfigService, engine: EngineClient, execLog: ExecutionLoggerService);
+    private log;
+    private forgetRun;
+    private get limits();
+    private resolveSettings;
+    private resolveScope;
+    create(dto: CreateExecutionDto, user: AuthUser, correlationId?: string, idempotencyKey?: string, restartOfRunId?: string): Promise<{
+        id: string;
+        status: "queued" | "running" | "completed" | "failed" | "cancelled" | "timed_out" | "passed" | "preparing" | "stopping" | "partially_passed" | "error";
+        testPaths: string[];
+        runScope: "failed" | "selected" | "all";
+        browser: string;
+        headed: boolean;
+        settings: EffectiveSettings;
+    }>;
+    restart(id: string, user: AuthUser, correlationId?: string): Promise<{
+        id: string;
+        status: "queued" | "running" | "completed" | "failed" | "cancelled" | "timed_out" | "passed" | "preparing" | "stopping" | "partially_passed" | "error";
+        testPaths: string[];
+        runScope: "failed" | "selected" | "all";
+        browser: string;
+        headed: boolean;
+        settings: EffectiveSettings;
+    }>;
+    private queuedPosition;
+    private pump;
+    private pumpOnce;
+    private emitStatus;
+    private setStatus;
+    private startRun;
+    private consumeStream;
+    private logEngineEvent;
+    private onStatusEvent;
+    private finalize;
+    private logTerminal;
+    getOne(id: string, user: AuthUser): Promise<ExecutionRun>;
+    listByProject(projectId: string, user: AuthUser): Promise<ExecutionRun[]>;
+    getEvents(id: string, user: AuthUser, fromSeq?: number): Promise<ExecutionEvent[]>;
+    getLogs(id: string, user: AuthUser, fromSeq?: number): Promise<ExecutionLogEntry[]>;
+    cancel(id: string, user: AuthUser, correlationId?: string): Promise<{
+        id: string;
+        cancelled: boolean;
+        status: "running" | "completed" | "failed" | "cancelled" | "timed_out" | "passed" | "preparing" | "partially_passed" | "error";
+    }>;
+    getResults(id: string, user: AuthUser): Promise<TestResult[]>;
+    getStoredReport(id: string, user: AuthUser): Promise<Record<string, unknown> | null>;
+}

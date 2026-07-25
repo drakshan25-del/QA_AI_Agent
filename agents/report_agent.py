@@ -63,6 +63,8 @@ def draft_defect(
     requirement: dict,
     evidence_refs: list[str],
     environment: str,
+    model: str | None = None,
+    temperature: float | None = None,
 ) -> DefectDraftOutput:
     """Draft a complete defect report for a classified failure (FR-BUG-001).
 
@@ -87,7 +89,7 @@ def draft_defect(
         RuntimeError: If no valid structured output is produced within the
             configured retry budget.
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
 
     # Secrets never enter prompts (FR-CI-004 / SEC-007).
@@ -109,14 +111,14 @@ def draft_defect(
         "Write the defect report now."
     )
 
-    model = get_chat_model().with_structured_output(DefectDraftOutput)
+    chat = get_chat_model(model=model, temperature=temperature).with_structured_output(DefectDraftOutput)
     messages = [("system", _DEFECT_SYSTEM_PROMPT), ("human", human_prompt)]
 
     attempts = settings.llm_max_retries + 1
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            draft = model.invoke(messages)
+            draft = chat.invoke(messages)
             if isinstance(draft, dict):
                 draft = DefectDraftOutput.model_validate(draft)
             if not draft.title.strip():
@@ -143,7 +145,11 @@ def draft_defect(
     )
 
 
-def summarise_run(run_summary: dict) -> str:
+def summarise_run(
+    run_summary: dict,
+    model: str | None = None,
+    temperature: float | None = None,
+) -> str:
     """Generate a 1-2 paragraph AI narrative for a run report (FR-REP-002).
 
     The caller MUST label the returned text as AI-generated when rendering
@@ -162,7 +168,7 @@ def summarise_run(run_summary: dict) -> str:
         RuntimeError: If no valid narrative is produced within the retry
             budget.
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
 
     facts = redact_secrets(json.dumps(run_summary, default=str, indent=2))[:6000]
@@ -172,14 +178,14 @@ def summarise_run(run_summary: dict) -> str:
         "Write the 1-2 paragraph narrative now."
     )
 
-    model = get_chat_model().with_structured_output(_RunNarrative)
+    chat = get_chat_model(model=model, temperature=temperature).with_structured_output(_RunNarrative)
     messages = [("system", _NARRATIVE_SYSTEM_PROMPT), ("human", human_prompt)]
 
     attempts = settings.llm_max_retries + 1
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             if isinstance(result, dict):
                 result = _RunNarrative.model_validate(result)
             text = result.narrative.strip()

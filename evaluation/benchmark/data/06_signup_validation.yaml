@@ -1,0 +1,66 @@
+id: "06-signup-validation"
+title: "Signup form field validation"
+user_story: >
+  As a new visitor, I want the signup form to validate my input so that I get
+  clear, immediate feedback and cannot create an account with invalid data.
+project_name: "Generic SaaS Onboarding"
+base_url: "http://localhost:8001"
+allowed_domains: ["localhost", "127.0.0.1"]
+
+requirement:
+  id: "REQ-SIGNUP"
+  title: "Signup validation"
+  text: >
+    The signup form collects full name, email, and password. Email must be a
+    valid format and not already registered. Password must be at least 8
+    characters with at least one letter and one number. All fields are required.
+    Invalid submissions are rejected with field-level error messages and no
+    account is created. On valid input an account is created and the user is
+    signed in.
+  acceptance_criteria:
+    - "Valid input creates an account and signs the user in."
+    - "An invalid email format is rejected with a field-level message."
+    - "A password shorter than 8 characters is rejected."
+    - "An already-registered email is rejected."
+    - "Submitting with any empty required field is rejected."
+
+expected_test_types: ["UI", "validation", "regression"]
+expected_categories: ["positive", "negative", "boundary", "validation", "error_handling"]
+min_cases: 10
+
+coverage_checklist:
+  - id: "valid-signup"
+    description: "Valid details create an account and sign the user in."
+    keywords: ["valid", "create", "account", "success"]
+  - id: "bad-email"
+    description: "An invalid email format is rejected with a message."
+    keywords: ["email", "invalid", "format", "@"]
+  - id: "short-password"
+    description: "A password shorter than 8 chars is rejected (boundary at 7/8)."
+    keywords: ["password", "short", "8", "length", "boundary"]
+  - id: "duplicate-email"
+    description: "An already-registered email is rejected."
+    keywords: ["duplicate", "already", "registered", "exists"]
+  - id: "empty-required"
+    description: "Empty required fields are rejected."
+    keywords: ["empty", "required", "blank", "missing"]
+
+reference_test_cases:
+  - id: "REF-SIGNUP-1"
+    case_key: "TC-001"
+    requirement_ids: ["REQ-SIGNUP"]
+    title: "Reject password shorter than 8 characters"
+    objective: "Verify a 7-character password is rejected at the boundary."
+    category: "boundary"
+    priority: "high"
+    preconditions: ["The signup form is open"]
+    test_data: {full_name: "Test User", email: "new.user@example.com", password: "abc123x"}
+    steps:
+      - "Open the signup form"
+      - "Enter a valid name and email"
+      - "Enter a 7-character password"
+      - "Submit the form"
+    expected_results:
+      - "A field-level error indicates the password is too short"
+      - "No account is created"
+    automation_suitability: "needs_review"

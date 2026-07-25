@@ -1,0 +1,89 @@
+id: "02-add-item"
+title: "Add an item to the list"
+user_story: >
+  As a logged-in member, I want to add a new item to my list so that I can keep
+  track of things I need to do.
+project_name: "Sample Member Portal"
+base_url: "http://localhost:8001"
+allowed_domains: ["localhost", "127.0.0.1"]
+
+requirement:
+  id: "REQ-ADD"
+  title: "Add item"
+  text: >
+    On the items page an authenticated user can type text into a new-item input
+    and click Add. The new item then appears in the list. Adding requires an
+    authenticated session; unauthenticated users are redirected to login.
+  acceptance_criteria:
+    - "A logged-in user can add an item and see it appear in the list."
+    - "An empty item should not create a blank entry."
+    - "Unauthenticated access to the items page redirects to login."
+
+expected_test_types: ["UI", "regression", "integration"]
+expected_categories: ["positive", "negative", "validation", "boundary"]
+min_cases: 8
+
+coverage_checklist:
+  - id: "add-visible"
+    description: "Adding a valid item makes it visible in the list."
+    keywords: ["add", "appears", "visible", "list"]
+  - id: "empty-item"
+    description: "Adding an empty/whitespace item does not create a blank entry."
+    keywords: ["empty", "blank", "whitespace"]
+  - id: "auth-required"
+    description: "Unauthenticated user is redirected to login when accessing items."
+    keywords: ["auth", "redirect", "login", "unauthenticated"]
+  - id: "long-text"
+    description: "A very long item text is handled without breaking the page (boundary)."
+    keywords: ["long", "boundary", "max", "length"]
+
+reference_test_cases:
+  - id: "REF-ADD-1"
+    case_key: "TC-001"
+    requirement_ids: ["REQ-ADD"]
+    title: "Add an item and see it in the list"
+    objective: "Verify a newly added item becomes visible on the items page."
+    category: "positive"
+    priority: "high"
+    preconditions: ["User is logged in", "The items page is open"]
+    test_data: {item_text: "Buy milk"}
+    steps:
+      - "Log in with valid credentials"
+      - "Open the items page"
+      - "Type an item into the new-item input"
+      - "Click the Add button"
+    expected_results:
+      - "An item containing the typed text is visible in the list"
+    automation_suitability: "automatable"
+
+robustness_variants:
+  - id: "paraphrase"
+    kind: "paraphrase"
+    requirement:
+      id: "REQ-ADD"
+      title: "Adding items"
+      text: >
+        A signed-in member types text into the new-item box and presses Add; the
+        item then shows up in their list. Empty text should not create a blank
+        entry, and people who are not signed in are sent to the login page.
+      acceptance_criteria:
+        - "A signed-in member can add an item and see it in the list."
+        - "Empty text creates no entry."
+        - "Not-signed-in users are redirected to login."
+  - id: "terse"
+    kind: "terse"
+    requirement:
+      id: "REQ-ADD"
+      title: "Add item"
+      text: "Items page: type text, click Add -> item appears. Empty -> no entry. Not logged in -> redirect to login."
+      acceptance_criteria:
+        - "Add shows the item."
+        - "Empty adds nothing."
+  - id: "missing_info"
+    kind: "missing_info"
+    requirement:
+      id: "REQ-ADD"
+      title: "Add item"
+      text: "An authenticated user can add an item to their list and it appears afterwards."
+      acceptance_criteria:
+        - "Adding an item makes it appear in the list."

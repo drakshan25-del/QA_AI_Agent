@@ -1,0 +1,15 @@
+# Week 3 evaluation-framework dependencies.
+#
+# Kept SEPARATE from requirements.txt so the application's runtime deps and the
+# Playwright CI (which installs requirements.txt) stay unchanged. Install with:
+#   .venv/bin/pip install -r requirements-eval.txt
+#
+# The core harness + metrics rely only on the app's existing deps (langchain,
+# pydantic, httpx). These extras power the benchmark loader, the results
+# export, and the comparison dashboard.
+
+PyYAML>=6.0        # benchmark suite is authored in YAML
+pandas>=2.2        # tabular aggregation + CSV export for statistical analysis
+streamlit>=1.36    # interactive comparison dashboard
+altair>=5.0        # charts inside the Streamlit dashboard (bundled with streamlit)
+psutil>=5.9        # optional process memory sampling during generation

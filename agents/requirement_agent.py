@@ -90,6 +90,8 @@ def analyse_requirement(
     text: str,
     acceptance_criteria: list[str],
     requirement_id: str = "",
+    model: str | None = None,
+    temperature: float | None = None,
 ) -> RequirementAnalysisOutput:
     """Analyse one requirement into a structured, validated output (FR-RA-001..004).
 
@@ -106,9 +108,11 @@ def analyse_requirement(
         RuntimeError: If the model cannot produce a valid structured output
             within ``llm_max_retries`` retries (never returns unvalidated text).
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
-    model = get_chat_model().with_structured_output(RequirementAnalysisOutput)
+    chat = get_chat_model(model=model, temperature=temperature).with_structured_output(
+        RequirementAnalysisOutput
+    )
     messages = [
         ("system", SYSTEM_PROMPT),
         ("human", _build_user_prompt(text, acceptance_criteria, requirement_id)),
@@ -119,7 +123,7 @@ def analyse_requirement(
     for attempt in range(1, attempts + 1):
         started = time.perf_counter()
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             elapsed = time.perf_counter() - started
             if not isinstance(result, RequirementAnalysisOutput):
                 raise ValueError("model returned no valid structured output")
@@ -145,6 +149,6 @@ def analyse_requirement(
 
     raise RuntimeError(
         f"Requirement analysis failed to produce a valid structured output "
-        f"after {attempts} attempts (model={settings.llm_model}, "
+        f"after {attempts} attempts (model={model or settings.llm_model}, "
         f"prompt={PROMPT_VERSION}). Last error: {last_error}"
     ) from last_error

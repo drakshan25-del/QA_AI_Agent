@@ -120,7 +120,12 @@ def heuristic_preclassify(error_message: str) -> dict:
     }
 
 
-def classify_failure(test: dict, context: dict) -> FailureClassificationOutput:
+def classify_failure(
+    test: dict,
+    context: dict,
+    model: str | None = None,
+    temperature: float | None = None,
+) -> FailureClassificationOutput:
     """Classify one failed test via LLM structured output (FR-RES-002).
 
     The prompt embeds the deterministic heuristic hint as evidence
@@ -140,7 +145,7 @@ def classify_failure(test: dict, context: dict) -> FailureClassificationOutput:
         RuntimeError: If no valid structured output is produced within the
             configured retry budget (unvalidated text is never returned).
     """
-    require_ollama()
+    require_ollama(model)
     settings = get_settings()
 
     # Secrets never enter prompts (FR-CI-004 / SEC-007).
@@ -165,14 +170,16 @@ def classify_failure(test: dict, context: dict) -> FailureClassificationOutput:
         "classification."
     )
 
-    model = get_chat_model().with_structured_output(FailureClassificationOutput)
+    chat = get_chat_model(model=model, temperature=temperature).with_structured_output(
+        FailureClassificationOutput
+    )
     messages = [("system", _SYSTEM_PROMPT), ("human", human_prompt)]
 
     attempts = settings.llm_max_retries + 1
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            result = model.invoke(messages)
+            result = chat.invoke(messages)
             if isinstance(result, dict):  # some providers return raw dicts
                 result = FailureClassificationOutput.model_validate(result)
             if result.classification not in VALID_CLASSIFICATIONS:

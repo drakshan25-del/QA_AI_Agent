@@ -19,10 +19,17 @@ from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from agents import report_agent, result_analysis_agent
-from app.core.llm import OllamaUnavailableError
+from app.core.llm import OllamaUnavailableError, resolve_project_model
 from app.core.logging import new_correlation_id
 from app.models.db import get_db
-from app.models.entities import ExecutionRun, Finding, Requirement, TestCase, TestResult
+from app.models.entities import (
+    ExecutionRun,
+    Finding,
+    Project,
+    Requirement,
+    TestCase,
+    TestResult,
+)
 from app.models.schemas import FailureClassificationOutput
 from app.services.audit import record_event
 from app.services.report_service import find_similar_findings
@@ -68,6 +75,13 @@ def _triage_context(db: Session, result: TestResult) -> tuple[TestCase | None, R
     return case, requirement
 
 
+def _project_model(db: Session, result: TestResult) -> tuple[str | None, float | None]:
+    """Resolve the LLM (model, temperature) of the project owning a test result."""
+    run = db.get(ExecutionRun, result.execution_run_id) if result.execution_run_id else None
+    project = db.get(Project, run.project_id) if run else None
+    return resolve_project_model(project)
+
+
 @router.post("/results/{result_id}/classify", status_code=201)
 def classify_result(result_id: str, db: Session = Depends(get_db)) -> dict:
     """Classify one failed test result via the Result Analysis Agent (FR-RES-002)."""
@@ -92,8 +106,9 @@ def classify_result(result_id: str, db: Session = Depends(get_db)) -> dict:
         "test_case_title": case.title if case else "",
         "steps": list(case.steps) if case else [],
     }
+    model, temperature = _project_model(db, result)
     try:
-        output = result_analysis_agent.classify_failure(test, context)
+        output = result_analysis_agent.classify_failure(test, context, model=model, temperature=temperature)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
     except RuntimeError as exc:
@@ -193,6 +208,8 @@ def draft_defect(finding_id: str, db: Session = Depends(get_db)) -> dict:
         "text": requirement.text if requirement else "",
     }
     environment = run.environment if run else "local"
+    project = db.get(Project, run.project_id) if run else None
+    model, temperature = resolve_project_model(project)
     try:
         draft = report_agent.draft_defect(
             test,
@@ -200,6 +217,8 @@ def draft_defect(finding_id: str, db: Session = Depends(get_db)) -> dict:
             requirement_dict,
             evidence_refs=_flatten_evidence(result.evidence),
             environment=environment,
+            model=model,
+            temperature=temperature,
         )
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None

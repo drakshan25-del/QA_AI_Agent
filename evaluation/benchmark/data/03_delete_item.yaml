@@ -1,0 +1,53 @@
+id: "03-delete-item"
+title: "Delete an item from the list"
+user_story: >
+  As a logged-in member, I want to delete an item from my list so that I can
+  remove things I no longer need.
+project_name: "Sample Member Portal"
+base_url: "http://localhost:8001"
+allowed_domains: ["localhost", "127.0.0.1"]
+
+requirement:
+  id: "REQ-DEL"
+  title: "Delete item"
+  text: >
+    On the items page each item has a Delete button. Clicking Delete removes
+    that item from the list. Deleting requires an authenticated session.
+  acceptance_criteria:
+    - "Clicking Delete on an item removes it from the visible list."
+    - "Deleting the only item leaves an empty list without errors."
+    - "Unauthenticated delete attempts are redirected to login."
+
+expected_test_types: ["UI", "regression"]
+expected_categories: ["positive", "negative", "boundary", "error_handling"]
+min_cases: 8
+
+coverage_checklist:
+  - id: "delete-removes"
+    description: "Deleting an item removes it from the list."
+    keywords: ["delete", "remove", "gone", "absent"]
+  - id: "delete-last"
+    description: "Deleting the last remaining item leaves an empty list without error."
+    keywords: ["last", "empty", "only", "remaining"]
+  - id: "auth-required"
+    description: "Unauthenticated delete is redirected to login."
+    keywords: ["auth", "redirect", "login", "unauthenticated"]
+
+reference_test_cases:
+  - id: "REF-DEL-1"
+    case_key: "TC-001"
+    requirement_ids: ["REQ-DEL"]
+    title: "Delete an item removes it from the list"
+    objective: "Verify deleting an item removes it from the visible list."
+    category: "positive"
+    priority: "high"
+    preconditions: ["User is logged in", "At least one item exists in the list"]
+    test_data: {item_text: "Task to remove"}
+    steps:
+      - "Log in with valid credentials"
+      - "Open the items page"
+      - "Add an item so the list is not empty"
+      - "Click the Delete button on that item"
+    expected_results:
+      - "No item containing the removed text remains in the list"
+    automation_suitability: "automatable"

@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from agents import report_agent, result_analysis_agent
 from app.core.config import get_settings
-from app.core.llm import OllamaUnavailableError, generation_metadata
+from app.core.llm import OllamaUnavailableError, generation_metadata, resolve_project_model
 from app.core.logging import get_logger
 from app.core.security import redact_secrets
 from app.models.entities import (
@@ -149,8 +149,9 @@ def generate_report(db: Session, execution_run_id: str) -> dict:
         ).all()
     )
 
+    model, temperature = resolve_project_model(project)
     data = _build_report_data(db, run, results, findings_by_result, project, generation_runs)
-    data["ai_narrative"] = _narrative_section(data)
+    data["ai_narrative"] = _narrative_section(data, model, temperature)
 
     md_text = render_report_md(data)
     html_text = render_report_html(data)
@@ -166,7 +167,7 @@ def generate_report(db: Session, execution_run_id: str) -> dict:
     return {"html_path": str(html_path), "md_path": str(md_path), "data": data}
 
 
-def _narrative_section(data: dict) -> dict:
+def _narrative_section(data: dict, model: str | None = None, temperature: float | None = None) -> dict:
     """AI narrative with deterministic fallback (FR-REP-002)."""
     metrics = data["metrics"]
     run_summary = {
@@ -181,7 +182,10 @@ def _narrative_section(data: dict) -> dict:
         ],
     }
     try:
-        return {"label": AI_NARRATIVE_LABEL, "text": report_agent.summarise_run(run_summary)}
+        return {
+            "label": AI_NARRATIVE_LABEL,
+            "text": report_agent.summarise_run(run_summary, model=model, temperature=temperature),
+        }
     except OllamaUnavailableError as exc:
         logger.warning("narrative fallback (Ollama unavailable): %s", exc)
         text = (
@@ -273,7 +277,7 @@ def _build_report_data(
     recommendations = _recommendations(failed + errors, classifications)
 
     # Reproducibility block (FR-REP-004): model, prompt versions, commit, CI.
-    llm_meta = generation_metadata()
+    llm_meta = generation_metadata(*resolve_project_model(project))
     prompt_versions = {gr.kind: gr.prompt_version for gr in generation_runs}
     prompt_versions["result_analysis"] = result_analysis_agent.PROMPT_VERSION
     prompt_versions["report"] = report_agent.PROMPT_VERSION

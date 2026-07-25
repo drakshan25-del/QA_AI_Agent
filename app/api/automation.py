@@ -23,7 +23,12 @@ from sqlalchemy.orm import Session
 
 from agents import automation_agent
 from app.core.config import BASE_DIR, get_settings
-from app.core.llm import OllamaUnavailableError, generation_metadata, require_ollama
+from app.core.llm import (
+    OllamaUnavailableError,
+    generation_metadata,
+    require_ollama,
+    resolve_project_model,
+)
 from app.core.logging import get_logger, new_correlation_id
 from app.models.db import get_db
 from app.models.entities import GeneratedArtifact, GenerationRun, Project, TestCase
@@ -117,8 +122,9 @@ def generate_automation(
     if project is None:
         raise HTTPException(status_code=404, detail="Owning project not found.")
 
+    model, temperature = resolve_project_model(project)
     try:
-        require_ollama()
+        require_ollama(model)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
@@ -141,7 +147,7 @@ def generate_automation(
         for c in cases
     ]
 
-    metadata = generation_metadata()
+    metadata = generation_metadata(model, temperature)
     run = GenerationRun(
         project_id=project.id,
         kind="automation",
@@ -157,7 +163,7 @@ def generate_automation(
     started = time.perf_counter()
     try:
         output = automation_agent.generate_automation(
-            case_dicts, base_url, _page_objects_summary()
+            case_dicts, base_url, _page_objects_summary(), model=model, temperature=temperature
         )
         written_paths = automation_agent.write_generated_files(output.files)
     except OllamaUnavailableError as exc:
