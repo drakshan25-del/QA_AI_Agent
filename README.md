@@ -26,6 +26,88 @@ React (Vite, :5173)  ──REST /api/v2/* + WS /api/v2/events──▶  NestJS b
 
 The V1 engine logic (`app/`, `agents/`, `graph/`, `tools/`, `automation/`, `sample_app/`) is **preserved and reused** by the engine tier. The integration contract every tier is built against is [`docs/V2_CONTRACT.md`](docs/V2_CONTRACT.md).
 
+## UI Scanner Agent (FR-UIS-*)
+
+The **UI Scanner** tab on the Analysis page opens the application under test in a
+real browser, discovers the elements that matter for automation, and produces a
+Playwright locator for each one that has been *validated against the live page*.
+
+```
+Analysis page ─ UI Scanner tab ─▶ POST /projects/:id/ui-scans ─▶ engine /internal/v1/ui-scans
+      ▲                                      │                            │ Playwright
+      └── ui_scan.status / ui_scan.log (WS) ─┘◀─ SSE ordered events ──────┘
+```
+
+- **Deterministic first.** Candidates are generated in stability order — role +
+  accessible name → label → test id → placeholder → scoped semantic → text →
+  name → stable id → CSS → XPath — then each one is rebuilt through the
+  Playwright API and probed against the page. Zero matches is invalid, a single
+  match against a *different* element is rejected, and duplicates are resolved
+  with a scoped locator (`getByRole('region', { name: 'Profile' })
+  .getByRole('button', { name: 'Save' })`) rather than `.nth()`.
+- **The model is a fallback, not the default.** The project's configured model
+  is consulted only for elements deterministic generation could not resolve,
+  receives compact sanitised metadata (never page HTML), and its suggestion is
+  validated on the live page like any other candidate.
+- **Locators are data, not code.** Every locator is stored twice: displayable
+  Playwright code and a machine-readable `locatorData` structure. Only the
+  structure is ever executed — nothing in this feature turns a stored string
+  into behaviour.
+- **Credentials are single-use.** The sign-in dialog's username and password are
+  forwarded to the browser session for one scan and are never persisted, logged
+  or sent to the model.
+
+## Locator-bound automation generation (FR-UIS-025)
+
+Saved locators are not a hint to the generator — they are its only source of
+locators. Every UI test step is bound to a scanned locator *before* the model is
+called, and the model's output is rejected if it contains any locator it was not
+given.
+
+```text
+Generated test case → read each test step → identify the page and the element
+  → search the project's scanned locator library → match step to element
+  → take the best approved locator → revalidate it when stale
+  → generate the Playwright step → record which locator was used
+```
+
+- **One fixed priority order.** Approved + recently validated → approved +
+  revalidated on the live page → valid, unique, high-confidence but not yet
+  approved → a targeted rescan → the model matching a step to an *already
+  scanned* element → unresolved. A model-proposed selector never enters that
+  ladder at all: the most the model can contribute is choosing between elements
+  the scanner already validated.
+- **Matching is deterministic first.** Page, frame, page state, role, accessible
+  name, label, placeholder, input type, visible text, the containing
+  form/dialog/region/row and the nearest heading decide which element a step
+  means. Two elements that match equally well are reported as ambiguous, not
+  resolved by `.nth()`.
+- **Revalidation is targeted, not blanket.** A locator goes back to the browser
+  when it has never been validated, has gone stale, failed on its last run, was
+  hand-edited or sits below the confidence bar — and then one browser context
+  serves every locator on that page, never one per step.
+- **Unresolved steps are marked, never faked.** A step nothing covers produces
+  `# LOCATOR_REVIEW_REQUIRED` in the code and a structured record in the API,
+  and the generated suite is reported as *not* execution-ready.
+- **Every generated interaction is traceable.** A row in
+  `generated_step_locator_refs` links the Playwright line → test step → scanned
+  element → locator record → version → scan, and the Automation page's Code tab
+  shows the element, page, strategy, expression, source, both confidences,
+  validation status, version and last-validated date.
+- **Usage is measured.** Generation bumps each locator's usage count; a finished
+  execution records success or failure against it — but only when the failure
+  *is* the locator failing to resolve, never an application assertion, a timeout
+  or bad test data.
+
+```text
+POST /projects/:projectId/locators/resolve         one test case (or ad-hoc steps)
+POST /projects/:projectId/locators/resolve-batch   several test cases, one pass
+POST /projects/:projectId/locators/revalidate      re-probe stored locators
+GET  /projects/:projectId/locators/:locatorId      one locator record
+GET  /projects/:projectId/locators/:locatorId/usage where it is used, how it ran
+GET  /automation/:id/locator-references            what a generated file is bound to
+```
+
 ## Run (local dev, no Docker required)
 
 Prereqs: Node 22+/npm, Python 3.12+ venv, Ollama running (`ollama serve` + `ollama pull qwen2.5:latest`).
@@ -33,7 +115,9 @@ Prereqs: Node 22+/npm, Python 3.12+ venv, Ollama running (`ollama serve` + `olla
 ```bash
 # 1. Engine (:8100)
 .venv/bin/pip install -r engine/requirements.txt
-ENGINE_TOKEN=dev-engine-token .venv/bin/python -m uvicorn engine.service.main:app --port 8100
+# --reload matters in dev: without it the engine keeps serving the code it was
+# started with, and edits appear to have no effect (or 404 on new routes).
+ENGINE_TOKEN=dev-engine-token .venv/bin/python -m uvicorn engine.service.main:app --port 8100 --reload
 
 # 2. Backend (:4000) — SQLite dev fallback (no Postgres/Docker needed)
 cd backend && npm install && \
@@ -91,6 +175,16 @@ Reports (JUnit + self-contained HTML), screenshots and traces upload as the
   and browser traffic is runtime-restricted to allow-listed domains.
 - Engine token comparisons are constant-time; tokens travel only in headers.
 - Secrets are masked in logs, step events and reports.
+- UI Scanner targets are SSRF-checked in the backend *and* the engine: only
+  http/https, DNS resolved and every returned address checked against loopback,
+  private, link-local, CGNAT, reserved and cloud-metadata ranges, with redirects
+  re-checked mid-scan. A project's `allowedDomains` re-enables named internal
+  hosts for local development.
+- Scan credentials are request-scoped: never written to the database, never
+  logged, never sent to the model. Password and hidden field *values* are
+  dropped at capture; only role, label, placeholder and type are kept.
+- Scan artefacts are served by scan id after a membership check, so no backend
+  filesystem path is ever exposed to the browser.
 
 ---
 

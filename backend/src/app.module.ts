@@ -20,6 +20,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { RequirementsModule } from './modules/requirements/requirements.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
+import { UiScannerModule } from './modules/ui-scanner/ui-scanner.module';
 import { TestPlansModule } from './modules/test-plans/test-plans.module';
 import { TestCasesModule } from './modules/test-cases/test-cases.module';
 import { AutomationModule } from './modules/automation/automation.module';
@@ -56,6 +57,7 @@ import { HealthModule } from './modules/health/health.module';
     DocumentsModule,
     RequirementsModule,
     AnalysisModule,
+    UiScannerModule,
     TestPlansModule,
     TestCasesModule,
     AutomationModule,

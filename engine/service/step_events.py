@@ -157,6 +157,18 @@ def pytest_runtest_logreport(report):  # noqa: D401
     emit_step("test", target=report.nodeid, status=status, test_name=report.nodeid)
 
 
+#: Chromium's error text for a request aborted by a client-side route handler.
+#: The only thing that aborts requests in this harness is the allow-list guard
+#: in ``automation/conftest.py`` (``route.abort("blockedbyclient")``), so this
+#: signature identifies an intentional block rather than a real failure.
+_EXPECTED_BLOCK = "ERR_BLOCKED_BY_CLIENT"
+
+
+def _is_expected_block(text: str) -> bool:
+    """True if ``text`` describes a request the allow-list guard blocked (SEC-003)."""
+    return _EXPECTED_BLOCK in (text or "").upper()
+
+
 # --- autouse fixture: attach page listeners for navigation/errors ----------
 
 try:
@@ -184,23 +196,31 @@ try:
                                       test_name=node),
             )
             # Console errors and failed network requests are part of the
-            # captured evidence (FR-V3-EXE-010).
+            # captured evidence (FR-V3-EXE-010) — except the ones the domain
+            # allow-list guard caused itself. Third-party fonts, images and
+            # analytics on a real target are aborted by design (SEC-003), so
+            # reporting them as failures buries the actual cause of a failing
+            # test under dozens of expected-block lines.
             page.on(
                 "console",
                 lambda msg: (
                     emit_step("error", target=f"console: {msg.text[:150]}",
                               status="failed", test_name=node)
-                    if msg.type == "error" else None
+                    if msg.type == "error" and not _is_expected_block(msg.text) else None
                 ),
             )
             page.on(
                 "requestfailed",
-                lambda request: emit_step(
-                    "error",
-                    target=f"network: {request.url[:120]}",
-                    value=str(getattr(request, "failure", "") or "")[:80],
-                    status="failed",
-                    test_name=node,
+                lambda request: (
+                    emit_step(
+                        "error",
+                        target=f"network: {request.url[:120]}",
+                        value=str(getattr(request, "failure", "") or "")[:80],
+                        status="failed",
+                        test_name=node,
+                    )
+                    if not _is_expected_block(str(getattr(request, "failure", "") or ""))
+                    else None
                 ),
             )
         yield

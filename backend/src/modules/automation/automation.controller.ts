@@ -123,6 +123,20 @@ export class AutomationController {
     );
   }
 
+  /**
+   * The UI Scanner locators this generated file was built from (FR-UIS-025
+   * §10). Element name, page, strategy, expression, source, confidences,
+   * validation status, version and last-validated date — never a credential,
+   * a cookie or a storage state.
+   */
+  @Get('automation/:id/locator-references')
+  async locatorReferences(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.automation.locatorReferences(id, user);
+  }
+
   @Get('automation/:id/execution-plan')
   async executionPlan(
     @Param('id') id: string,

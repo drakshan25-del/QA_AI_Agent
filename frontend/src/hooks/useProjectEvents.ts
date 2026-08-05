@@ -61,6 +61,13 @@ export function useProjectEvents(
           // except the jobs list — never fan out wider (no refetch storm).
           invalidate(['projects', projectId, 'jobs']);
           break;
+        case 'ui_scan.ready':
+          // A finished scan changes the scan list, its elements and the
+          // project's locator library; the live console handles its own
+          // stream, so status ticks are deliberately not fanned out here.
+          invalidate(['projects', projectId, 'ui-scans']);
+          invalidate(['projects', projectId, 'locators']);
+          break;
         case 'notification.new':
           invalidate(['notifications']);
           break;

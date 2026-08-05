@@ -85,7 +85,13 @@ export class EngineClient {
     };
     // FastAPI puts the actionable reason (e.g. "Model 'x' is not available in
     // Ollama...") in `detail`; without it the job error is just a status code.
-    const reason = typeof detail.detail === 'string' ? ` — ${detail.detail}` : '';
+    // A timeout has no response body at all, so name the knob that fixes it.
+    const reason =
+      typeof detail.detail === 'string'
+        ? ` — ${detail.detail}`
+        : ax.code === 'ECONNABORTED' || ax.code === 'ETIMEDOUT'
+          ? ' — the model did not respond in time; raise ENGINE_TIMEOUT_MS or choose a faster model'
+          : '';
     this.logger.error(`${ctx} failed: ${ax.message}${reason}`, undefined);
     return new EngineException(
       `Engine call failed (${ctx}): ${ax.message}${reason}`,
@@ -156,6 +162,20 @@ export class EngineClient {
       testCases: unknown[];
       baseUrl?: string;
       pageObjectsSummary?: string;
+      /** Approved locators from the UI Scanner; the agent must use these
+       * instead of inventing selectors (FR-UIS-025). */
+      approvedLocators?: unknown[];
+      /**
+       * Per-step locators already resolved against the scanner's library
+       * (FR-UIS-025 §8). This — not raw HTML, not "write a selector" — is what
+       * binds a generated Playwright line to a validated locator.
+       */
+      resolvedSteps?: unknown[];
+      /** Steps no validated locator was found for; the agent must emit a
+       * note for each instead of inventing one; nothing is blocked. */
+      unresolvedSteps?: unknown[];
+      /** Emit `# UI Scanner Locator: <id>-v<n>` comments (§14). */
+      locatorComments?: boolean;
       model?: string;
       temperature?: number;
     },
@@ -163,6 +183,33 @@ export class EngineClient {
     idempotencyKey?: string,
   ): Promise<Record<string, unknown>> {
     return this.post('/automation', body, correlationId, idempotencyKey);
+  }
+
+  /**
+   * Ask the model to match test steps to elements the scanner already found
+   * (FR-UIS-025 §2.5).
+   *
+   * The request carries compact element *metadata* and the response may only
+   * name a locator id that was offered — the model has no way to introduce a
+   * selector of its own through this call, and the caller discards anything
+   * that is not in the offered set.
+   */
+  async matchLocators(
+    body: {
+      steps: {
+        testStepId: string;
+        description: string;
+        action: string;
+        pageName?: string;
+        parentContext?: string;
+      }[];
+      elements: Record<string, unknown>[];
+      model?: string;
+      temperature?: number;
+    },
+    correlationId?: string,
+  ): Promise<{ matches: { testStepId: string; locatorId: string; confidence?: number }[] }> {
+    return this.post('/locators/match', body, correlationId);
   }
 
   // --- validation / plan --------------------------------------------------
@@ -237,6 +284,91 @@ export class EngineClient {
     return this.post('/render-pdf', { html }, correlationId);
   }
 
+  // --- UI scanner (FR-UIS-*) ----------------------------------------------
+
+  /**
+   * Start a UI scan. The engine owns the browser; the backend owns the scan
+   * record and supplies its id, so events and the collected result correlate
+   * without a second identifier.
+   *
+   * `username`/`password`/`storageState` are forwarded for a single sign-in
+   * and are never persisted by either tier (§16) — which is also why this
+   * call is deliberately *not* retried: a replay would resubmit credentials.
+   */
+  async startUiScan(
+    body: UiScanRequest,
+    correlationId?: string,
+  ): Promise<{ scanId: string; status: string; eventsUrl: string }> {
+    try {
+      const res = await this.http.post<{
+        scanId: string;
+        status: string;
+        eventsUrl: string;
+      }>('/ui-scans', body, { headers: this.headers(correlationId) });
+      return res.data;
+    } catch (err) {
+      throw this.wrap(err, 'POST /ui-scans');
+    }
+  }
+
+  async cancelUiScan(
+    scanId: string,
+    correlationId?: string,
+  ): Promise<{ scanId: string; cancelled: boolean }> {
+    try {
+      const res = await this.http.post<{ scanId: string; cancelled: boolean }>(
+        `/ui-scans/${encodeURIComponent(scanId)}/cancel`,
+        {},
+        { headers: this.headers(correlationId) },
+      );
+      return res.data;
+    } catch (err) {
+      throw this.wrap(err, `POST /ui-scans/${scanId}/cancel`);
+    }
+  }
+
+  /**
+   * Collect a finished scan's result. The screenshot and ARIA snapshot travel
+   * here rather than through the event stream, which stays small and ordered.
+   */
+  async getUiScanResult(
+    scanId: string,
+    correlationId?: string,
+  ): Promise<UiScanResult> {
+    const res = await this.http.get<UiScanResult>(
+      `/ui-scans/${encodeURIComponent(scanId)}/result`,
+      {
+        headers: this.headers(correlationId),
+        // A full-page screenshot plus a few hundred elements is well past
+        // axios' 10MB default body cap.
+        maxContentLength: 64 * 1024 * 1024,
+        maxBodyLength: 64 * 1024 * 1024,
+      },
+    );
+    return res.data;
+  }
+
+  /**
+   * Re-validate stored locators against the live page. Synchronous and
+   * short-lived — it powers "Test locator" and "Revalidate", where the verdict
+   * must come from the application rather than from a remembered result.
+   */
+  async validateUiLocators(
+    body: ValidateLocatorsRequest,
+    correlationId?: string,
+  ): Promise<{ results: EngineLocatorVerdict[] }> {
+    try {
+      const res = await this.http.post<{ results: EngineLocatorVerdict[] }>(
+        '/ui-scans/validate-locators',
+        body,
+        { headers: this.headers(correlationId) },
+      );
+      return res.data;
+    } catch (err) {
+      throw this.wrap(err, 'POST /ui-scans/validate-locators');
+    }
+  }
+
   async cancelExecution(
     runId: string,
     correlationId?: string,
@@ -295,6 +427,141 @@ export class EngineClient {
   }
 }
 
+/** Body of `POST /internal/v1/ui-scans` (V2_CONTRACT §4, FR-UIS-*). */
+export interface UiScanRequest {
+  scanId: string;
+  url: string;
+  browser: string;
+  headless: boolean;
+  timeoutMs: number;
+  maxElements: number;
+  maxPages: number;
+  includeHidden: boolean;
+  captureScreenshot: boolean;
+  captureAccessibility: boolean;
+  scanFrames: boolean;
+  allowedHosts: string[];
+  allowPrivateNetwork: boolean;
+  preScanActions?: Record<string, unknown>[];
+  loginUrl?: string;
+  /** Single-use sign-in credentials — forwarded, never stored (§16). */
+  username?: string;
+  password?: string;
+  /** Opaque Playwright storage state; never logged or returned (§16). */
+  storageState?: Record<string, unknown>;
+  model: string;
+  temperature: number;
+  useLlmFallback: boolean;
+  correlationId?: string;
+}
+
+/** Body of `POST /internal/v1/ui-scans/validate-locators`. */
+export interface ValidateLocatorsRequest {
+  url: string;
+  browser: string;
+  headless: boolean;
+  timeoutMs: number;
+  allowedHosts: string[];
+  allowPrivateNetwork: boolean;
+  loginUrl?: string;
+  username?: string;
+  password?: string;
+  storageState?: Record<string, unknown>;
+  locators: { id: string; locatorData: Record<string, unknown> }[];
+}
+
+/** Verdict for one re-validated locator. */
+export interface EngineLocatorVerdict {
+  id: string;
+  matchCount: number;
+  unique: boolean;
+  valid: boolean;
+  visible: boolean;
+  enabled: boolean;
+  error?: string;
+}
+
+/** One locator candidate as returned by the engine. */
+export interface EngineLocatorCandidate {
+  id: string;
+  strategy: string;
+  expression: string;
+  pythonExpression: string;
+  locatorData: Record<string, unknown>;
+  baseScore: number;
+  finalScore: number;
+  confidence: number;
+  matchCount: number;
+  unique: boolean;
+  valid: boolean;
+  reasons: string[];
+  warnings: string[];
+  source: string;
+  [k: string]: unknown;
+}
+
+/** One scanned element as returned by the engine. */
+export interface EngineScannedElement {
+  elementKey: string;
+  uid: string;
+  tagName: string;
+  inferredRole: string;
+  explicitRole: string;
+  accessibleName: string;
+  accessibleNameSource: string;
+  visibleText: string;
+  inputType: string;
+  name: string;
+  id: string;
+  placeholder: string;
+  title: string;
+  alt: string;
+  href: string;
+  value: string;
+  testIds: Record<string, string>;
+  classes: string[];
+  ariaLabel: string;
+  ariaLabelledBy: string;
+  ariaDescribedBy: string;
+  ariaDescription: string;
+  sensitive: boolean;
+  states: Record<string, boolean>;
+  position: Record<string, number>;
+  context: Record<string, unknown>;
+  frame: Record<string, unknown>;
+  candidates: EngineLocatorCandidate[];
+  recommendedLocatorId: string;
+  status: string;
+  pageUrl: string;
+  pageTitle: string;
+}
+
+/** Body of `GET /internal/v1/ui-scans/:scanId/result`. */
+export interface UiScanResult {
+  schema_version?: string;
+  status: 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  url: string;
+  finalUrl: string;
+  pageTitle: string;
+  browser: string;
+  headless: boolean;
+  elements: EngineScannedElement[];
+  frames: Record<string, unknown>[];
+  metrics: Record<string, unknown>;
+  warnings: string[];
+  errors?: string[];
+  error?: {
+    code: string;
+    message: string;
+    stage: string;
+    recoverable: boolean;
+  };
+  accessibilitySnapshot: string;
+  screenshotBase64: string;
+  selectedModel: string;
+  durationMs: number;
+}
+
 export interface EngineParsedDocument {
   filename: string;
   category: string;
@@ -316,9 +583,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Transient = worth retrying with backoff (FR-V3-ENT-009). */
+/** Transient = worth retrying with backoff (FR-V3-ENT-009).
+ *
+ * A client-side timeout is deliberately NOT transient. The engine runs
+ * generation synchronously and does not cancel on client disconnect, so when
+ * `ENGINE_TIMEOUT_MS` fires the work is still running on Ollama. Retrying
+ * starts a *second* generation competing for the same GPU — three attempts
+ * against a slow reasoning model (deepseek-r1) means ~30 minutes of load that
+ * cannot succeed. Raise `ENGINE_TIMEOUT_MS` instead.
+ */
 function isTransient(err: unknown): boolean {
   const ax = err as AxiosError;
+  // axios reports timeouts as ECONNABORTED, or ETIMEDOUT when
+  // `transitional.clarifyTimeoutError` is enabled.
+  if (ax.code === 'ECONNABORTED' || ax.code === 'ETIMEDOUT') return false;
   if (!ax.response) return true; // network / connection error
   return [502, 503, 504].includes(ax.response.status);
 }

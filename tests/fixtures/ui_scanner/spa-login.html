@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>UI Scanner fixture — SPA sign-in</title>
+  </head>
+  <body>
+    <!-- The form is mounted after load, the way a single-page application
+         behaves: scanning at `networkidle` would find no login form at all. -->
+    <div id="app"></div>
+    <script>
+      window.setTimeout(() => {
+        document.getElementById('app').innerHTML =
+          '<form aria-label="Sign in">' +
+          '<label for="u">Username</label>' +
+          '<input id="u" name="username" type="text" />' +
+          '<label for="p">Password</label>' +
+          '<input id="p" name="password" type="password" />' +
+          '<button type="submit">Login</button>' +
+          '<p id="err" role="alert" style="display:none">Invalid credentials</p>' +
+          '</form>';
+        document.querySelector('form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          const ok = document.getElementById('u').value === 'qa'
+                  && document.getElementById('p').value === 'correct-horse';
+          if (ok) {
+            document.getElementById('app').innerHTML =
+              '<section aria-label="Dashboard"><h1>Dashboard</h1>' +
+              '<button type="button">Sign out</button></section>';
+          } else {
+            document.getElementById('err').style.display = 'block';
+          }
+        });
+      }, 300);
+    </script>
+  </body>
+</html>

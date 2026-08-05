@@ -25,6 +25,15 @@ except Exception:  # pragma: no cover - engine package not importable in some ru
         return None
 
 
+def _reason(exc: Exception) -> str:
+    """First line of an assertion error, for the live timeline (FR-EXE-007).
+
+    Playwright's ``expect`` failures carry a multi-line diff; the log line only
+    needs the headline so the real cause is not lost among page noise.
+    """
+    return str(exc).strip().splitlines()[0][:150] if str(exc).strip() else exc.__class__.__name__
+
+
 class BasePage:
     """Minimal, deterministic base class for sync-Playwright page objects.
 
@@ -45,11 +54,19 @@ class BasePage:
     # -- navigation ---------------------------------------------------------
 
     def goto(self, path: str | None = None) -> None:
-        """Navigate to ``base_url + path`` (defaults to the class ``path``)."""
+        """Navigate to ``base_url + path`` (defaults to the class ``path``).
+
+        A root path contributes nothing, so the URL is ``base_url`` exactly —
+        no trailing slash is appended. Targets whose ``base_url`` is already a
+        full page URL treat the slashed form as a different address.
+        """
         target = self.path if path is None else path
-        if not target.startswith("/"):
-            target = "/" + target
-        url = f"{self.base_url}{target}"
+        if target in ("", "/"):
+            url = self.base_url
+        else:
+            if not target.startswith("/"):
+                target = "/" + target
+            url = f"{self.base_url}{target}"
         emit_step("navigate", target=url, status="running", current_url=url)
         self.page.goto(url)
         emit_step("navigate", target=url, status="passed", current_url=url)
@@ -167,38 +184,61 @@ class BasePage:
 
     # -- web-first assertion helpers (FR-AUT-004) ----------------------------
 
-    def assert_visible(self, locator: Locator) -> None:
+    def assert_visible(self, locator: Locator, label: str = "") -> None:
         """Assert the element becomes visible (auto-waiting, no sleeps)."""
-        emit_step("assert", target="visible", status="running")
-        expect(locator).to_be_visible()
-        emit_step("assert", target="visible", status="passed")
+        target = label or "visible"
+        emit_step("assert", target=target, status="running")
+        try:
+            expect(locator).to_be_visible()
+        except Exception as exc:
+            emit_step("assert", target=target, value=_reason(exc), status="failed")
+            raise
+        emit_step("assert", target=target, status="passed")
 
-    def assert_contains_text(self, locator: Locator, text: str) -> None:
+    def assert_contains_text(self, locator: Locator, text: str, label: str = "") -> None:
         """Assert the element's text contains ``text`` (auto-waiting)."""
-        emit_step("assert", target=f"contains_text:{text}", status="running")
-        expect(locator).to_contain_text(text)
-        emit_step("assert", target=f"contains_text:{text}", status="passed")
+        target = label or f"contains_text:{text}"
+        emit_step("assert", target=target, status="running")
+        try:
+            expect(locator).to_contain_text(text)
+        except Exception as exc:
+            emit_step("assert", target=target, value=_reason(exc), status="failed")
+            raise
+        emit_step("assert", target=target, status="passed")
 
-    def assert_count(self, locator: Locator, count: int) -> None:
+    def assert_count(self, locator: Locator, count: int, label: str = "") -> None:
         """Assert the locator resolves to exactly ``count`` elements."""
-        emit_step("assert", target=f"count:{count}", status="running")
-        expect(locator).to_have_count(count)
-        emit_step("assert", target=f"count:{count}", status="passed")
+        target = label or f"count:{count}"
+        emit_step("assert", target=target, status="running")
+        try:
+            expect(locator).to_have_count(count)
+        except Exception as exc:
+            emit_step("assert", target=target, value=_reason(exc), status="failed")
+            raise
+        emit_step("assert", target=target, status="passed")
 
-    def assert_url_contains(self, fragment: str) -> None:
+    def assert_url_contains(self, fragment: str, label: str = "") -> None:
         """Assert the current page URL contains ``fragment``."""
-        emit_step("assert", target=f"url_contains:{fragment}", status="running",
-                  current_url=self.page.url)
+        target = label or f"url_contains:{fragment}"
+        emit_step("assert", target=target, status="running", current_url=self.page.url)
         # to_have_url accepts a regex; escape the fragment so this is a
         # deterministic substring match with auto-waiting.
-        expect(self.page).to_have_url(re.compile(".*" + re.escape(fragment) + ".*"))
-        emit_step("assert", target=f"url_contains:{fragment}", status="passed",
-                  current_url=self.page.url)
+        try:
+            expect(self.page).to_have_url(re.compile(".*" + re.escape(fragment) + ".*"))
+        except Exception as exc:
+            emit_step("assert", target=target, value=_reason(exc), status="failed",
+                      current_url=self.page.url)
+            raise
+        emit_step("assert", target=target, status="passed", current_url=self.page.url)
 
-    def assert_url_not_contains(self, fragment: str) -> None:
+    def assert_url_not_contains(self, fragment: str, label: str = "") -> None:
         """Assert the current page URL does NOT contain ``fragment``."""
-        emit_step("assert", target=f"url_not_contains:{fragment}", status="running",
-                  current_url=self.page.url)
-        expect(self.page).not_to_have_url(re.compile(".*" + re.escape(fragment) + ".*"))
-        emit_step("assert", target=f"url_not_contains:{fragment}", status="passed",
-                  current_url=self.page.url)
+        target = label or f"url_not_contains:{fragment}"
+        emit_step("assert", target=target, status="running", current_url=self.page.url)
+        try:
+            expect(self.page).not_to_have_url(re.compile(".*" + re.escape(fragment) + ".*"))
+        except Exception as exc:
+            emit_step("assert", target=target, value=_reason(exc), status="failed",
+                      current_url=self.page.url)
+            raise
+        emit_step("assert", target=target, status="passed", current_url=self.page.url)

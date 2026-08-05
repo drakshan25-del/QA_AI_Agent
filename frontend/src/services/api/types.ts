@@ -158,6 +158,9 @@ export type EventType =
   | 'execution.step'
   | 'execution.status'
   | 'execution.log'
+  | 'ui_scan.status'
+  | 'ui_scan.log'
+  | 'ui_scan.ready'
   | 'notification.new'
   | 'ci.status';
 
@@ -803,6 +806,495 @@ export interface ProjectDashboard {
   passRate: { total: number; passed: number; failed: number; percent: number };
   defects: number;
   recentActivity: AuditEvent[];
+}
+
+// ---- UI Scanner (FR-UIS-*) -------------------------------------------------
+
+/**
+ * Scan lifecycle. One closed vocabulary shared verbatim with the backend
+ * (`common/enums.ts`) and the engine (`engine/uiscanner/types.py`).
+ */
+export type UiScanStage =
+  | 'IDLE'
+  | 'QUEUED'
+  | 'STARTING_BROWSER'
+  | 'NAVIGATING'
+  | 'AUTHENTICATING'
+  | 'WAITING_FOR_PAGE'
+  | 'SCANNING_DOM'
+  | 'SCANNING_FRAMES'
+  | 'CAPTURING_ACCESSIBILITY'
+  | 'GENERATING_LOCATORS'
+  | 'VALIDATING_LOCATORS'
+  | 'CAPTURING_SCREENSHOT'
+  | 'SAVING_RESULTS'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'FAILED';
+
+export const UI_SCAN_STAGES: UiScanStage[] = [
+  'IDLE',
+  'QUEUED',
+  'STARTING_BROWSER',
+  'NAVIGATING',
+  'AUTHENTICATING',
+  'WAITING_FOR_PAGE',
+  'SCANNING_DOM',
+  'SCANNING_FRAMES',
+  'CAPTURING_ACCESSIBILITY',
+  'GENERATING_LOCATORS',
+  'VALIDATING_LOCATORS',
+  'CAPTURING_SCREENSHOT',
+  'SAVING_RESULTS',
+  'COMPLETED',
+  'CANCELLED',
+  'FAILED',
+];
+
+export const UI_SCAN_TERMINAL_STAGES: UiScanStage[] = [
+  'COMPLETED',
+  'CANCELLED',
+  'FAILED',
+];
+
+/** Human-readable stage labels for the progress panel. */
+export const UI_SCAN_STAGE_LABELS: Record<UiScanStage, string> = {
+  IDLE: 'Idle',
+  QUEUED: 'Queued',
+  STARTING_BROWSER: 'Starting browser',
+  NAVIGATING: 'Navigating',
+  AUTHENTICATING: 'Authenticating',
+  WAITING_FOR_PAGE: 'Waiting for page',
+  SCANNING_DOM: 'Scanning DOM',
+  SCANNING_FRAMES: 'Scanning frames',
+  CAPTURING_ACCESSIBILITY: 'Capturing accessibility snapshot',
+  GENERATING_LOCATORS: 'Generating locators',
+  VALIDATING_LOCATORS: 'Validating locators',
+  CAPTURING_SCREENSHOT: 'Capturing screenshot',
+  SAVING_RESULTS: 'Saving results',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+  FAILED: 'Failed',
+};
+
+export type LocatorStrategy =
+  | 'role'
+  | 'label'
+  | 'testId'
+  | 'placeholder'
+  | 'text'
+  | 'scopedRole'
+  | 'name'
+  | 'css'
+  | 'xpath';
+
+export type LocatorSource = 'deterministic-scanner' | 'llm-fallback' | 'manual';
+
+export type LocatorStatus =
+  | 'valid'
+  | 'unique'
+  | 'multiple_matches'
+  | 'invalid'
+  | 'needs_review'
+  | 'approved'
+  | 'rejected'
+  | 'manually_edited';
+
+/** Where an element lives, as a rebuildable chain of iframe selectors. */
+export interface FrameDefinition {
+  path: string[];
+  url: string;
+  name: string;
+  title: string;
+  selector: string;
+  parentIndex: number;
+  index: number;
+  elementCount?: number;
+}
+
+/** Machine-readable locator — the only form that is ever executed (§10). */
+export interface LocatorData {
+  strategy: LocatorStrategy;
+  role?: string | null;
+  name?: string | null;
+  exact?: boolean;
+  value?: string | null;
+  selector?: string | null;
+  attribute?: string | null;
+  parent?: LocatorData;
+  child?: LocatorData;
+  frame?: FrameDefinition | null;
+}
+
+export interface LocatorCandidate {
+  id: string;
+  strategy: LocatorStrategy;
+  /** Displayable Playwright code (TypeScript form). */
+  expression: string;
+  /** The same locator as sync-Python code. */
+  pythonExpression: string;
+  locatorData: LocatorData;
+  baseScore: number;
+  finalScore: number;
+  confidence: number;
+  matchCount: number;
+  unique: boolean;
+  valid: boolean;
+  visibleMatch?: boolean | null;
+  enabledMatch?: boolean | null;
+  roleMatch?: boolean | null;
+  nameMatch?: boolean | null;
+  identityMatch?: boolean | null;
+  reasons: string[];
+  warnings: string[];
+  source: LocatorSource;
+}
+
+export interface UiScanMetrics {
+  totalElements?: number;
+  uniqueLocators?: number;
+  unresolvedElements?: number;
+  uniqueLocatorRate?: number;
+  semanticLocatorRate?: number;
+  testIdLocatorRate?: number;
+  cssFallbackRate?: number;
+  xpathFallbackRate?: number;
+  averageCandidatesPerElement?: number;
+  locatorGenerationSuccessRate?: number;
+  validationDurationMs?: number;
+  llmFallbackCount?: number;
+  llmFallbackAccepted?: number;
+  llmFallbackRate?: number;
+  llmDurationMs?: number;
+  warningCount?: number;
+  errorCount?: number;
+  averageConfidence?: number;
+  scanDurationMs?: number;
+  [k: string]: unknown;
+}
+
+export interface UiScan {
+  id: string;
+  projectId: string;
+  createdBy: string | null;
+  url: string;
+  finalUrl: string;
+  pageTitle: string;
+  browser: string;
+  headless: boolean;
+  status: UiScanStage;
+  progress: number;
+  options: Record<string, unknown> | null;
+  cancelRequested: boolean;
+  totalElements: number;
+  validLocatorCount: number;
+  unresolvedCount: number;
+  frameCount: number;
+  /** Pages visited by the crawl; 1 for a single-page scan. */
+  pageCount: number;
+  warningCount: number;
+  errorCount: number;
+  approvedLocatorCount: number;
+  metrics: UiScanMetrics | null;
+  frames: FrameDefinition[] | null;
+  warnings: string[] | null;
+  errorMessage: string;
+  errorDetail: UiScanErrorDetail | null;
+  screenshotFile: string;
+  accessibilitySnapshotFile: string;
+  selectedModel: string;
+  authenticated: boolean;
+  correlationId: string;
+  rescanOfId: string | null;
+  schemaVersion: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Structured failure envelope (§27). */
+export interface UiScanErrorDetail {
+  code: string;
+  message: string;
+  scanId: string;
+  stage: UiScanStage;
+  recoverable: boolean;
+}
+
+export interface ScannedElement {
+  id: string;
+  scanId: string;
+  projectId: string;
+  elementKey: string;
+  tagName: string;
+  role: string;
+  explicitRole: string;
+  accessibleName: string;
+  accessibleNameSource: string;
+  visibleText: string;
+  attributes: Record<string, unknown> | null;
+  states: Record<string, boolean> | null;
+  position: Record<string, number> | null;
+  context: Record<string, unknown> | null;
+  frame: FrameDefinition | null;
+  candidates: LocatorCandidate[] | null;
+  recommendedLocatorId: string;
+  status: LocatorStatus;
+  sensitive: boolean;
+  pageUrl: string;
+  pageTitle: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A locator saved to the project library (FR-UIS-021). */
+export interface LocatorRecord {
+  id: string;
+  projectId: string;
+  scanId: string | null;
+  scannedElementId: string | null;
+  elementKey: string;
+  pageName: string;
+  pageUrlPattern: string;
+  elementName: string;
+  role: string;
+  strategy: LocatorStrategy;
+  locatorData: LocatorData;
+  expression: string;
+  pythonExpression: string;
+  confidenceScore: number;
+  matchCount: number;
+  validationStatus: LocatorStatus;
+  approved: boolean;
+  active: boolean;
+  version: number;
+  supersedesId: string | null;
+  source: LocatorSource;
+  rationale: Record<string, unknown> | null;
+  createdBy: string | null;
+  approvedBy: string | null;
+  lastValidatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type UiScanLogLevel = 'debug' | 'info' | 'warning' | 'error' | 'success';
+
+/** Persisted UI-scan log row returned by GET .../ui-scans/:id/logs. */
+export interface UiScanLogRow {
+  id: string;
+  scanId: string;
+  projectId: string;
+  seq: number;
+  stage: UiScanStage;
+  level: UiScanLogLevel;
+  message: string;
+  progress: number | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** `ui_scan.log` WS payload. */
+export interface UiScanLogPayload {
+  scanId: string;
+  seq: number;
+  level: UiScanLogLevel;
+  stage: UiScanStage;
+  message: string;
+  progress: number | null;
+  meta?: Record<string, unknown>;
+  ts: string;
+}
+
+/** `ui_scan.status` WS payload. */
+export interface UiScanStatusPayload {
+  scanId: string;
+  projectId: string;
+  stage: UiScanStage;
+  progress: number;
+  message: string;
+  totalElements?: number;
+  validLocatorCount?: number;
+  unresolvedCount?: number;
+  frameCount?: number;
+  pageCount?: number;
+  warningCount?: number;
+  errorCount?: number;
+  startedAt?: string | null;
+}
+
+/** One deterministic interaction performed before the scan starts (§15). */
+export interface PreScanAction {
+  action: 'click' | 'fill' | 'selectOption' | 'waitFor' | 'waitForUrl' | 'press';
+  locator?: LocatorData;
+  value?: string;
+  key?: string;
+  url?: string;
+}
+
+export interface StartUiScanInput {
+  url: string;
+  browser?: BrowserEngine;
+  headless?: boolean;
+  timeoutMs?: number;
+  maxElements?: number;
+  /** Pages to scan by following in-app links; 1 scans only the target page. */
+  maxPages?: number;
+  includeHidden?: boolean;
+  captureScreenshot?: boolean;
+  captureAccessibility?: boolean;
+  scanFrames?: boolean;
+  useLlmFallback?: boolean;
+  loginUrl?: string;
+  /** Single-use target-application credential; never stored (§16). */
+  username?: string;
+  /** Single-use target-application credential; never stored (§16). */
+  password?: string;
+  storageStateId?: string;
+  preScanActions?: PreScanAction[];
+}
+
+/** Aggregate UI Scanner metrics across a project (§29). */
+export interface ProjectLocatorMetrics {
+  scans: number;
+  totalElements: number;
+  uniqueLocators: number;
+  unresolvedElements: number;
+  uniqueLocatorRate: number;
+  semanticLocatorRate: number;
+  llmFallbackRate: number;
+  averageScanDurationMs: number;
+  approvedLocators: number;
+  locatorApprovalRate: number;
+}
+
+/** Where a locator handed to automation generation came from (§8). */
+export type LocatorResolutionSource =
+  | 'DETERMINISTIC_SCANNER'
+  | 'LLM_FALLBACK'
+  | 'MANUAL_EDIT';
+
+/**
+ * One scanned locator a generated file actually uses (§10).
+ *
+ * Recorded at generation time from the resolution result the generator was
+ * bound to, and confirmed against the emitted code — so this describes what
+ * the file contains, not what the agent was offered.
+ */
+export interface LocatorUsage {
+  locatorId: string;
+  locatorVersion: number;
+  testStepId: string;
+  testStep: string;
+  elementName: string;
+  pageName: string;
+  pageUrlPattern: string;
+  role: string;
+  strategy: LocatorStrategy;
+  expression: string;
+  /** Confidence in the locator itself, from the scan. */
+  confidence: number;
+  /** Confidence that this element is what the test step meant. */
+  matchConfidence: number;
+  validationStatus: LocatorStatus;
+  validatedAt: string | null;
+  source: LocatorResolutionSource;
+  scanId: string | null;
+  scannedElementId: string;
+  awaitingApproval: boolean;
+}
+
+/** A test step no validated scanned locator was found for (§11). */
+export interface UnresolvedStep {
+  /** `LOCATOR_REVIEW_REQUIRED` appears in artefacts generated before the
+   * review stage was removed; it reads as a diagnostic, never a gate. */
+  status: 'NO_APPROVED_MATCH' | 'LOCATOR_REVIEW_REQUIRED';
+  testStepId: string;
+  testCaseId: string;
+  sequence: number;
+  testStep: string;
+  action: string;
+  reason: string;
+  suggestedAction: string;
+  consideredElements: string[];
+}
+
+/**
+ * The persisted step→locator traceability row (§9).
+ *
+ * Reading these is what makes the chain navigable in the UI: generated line →
+ * test step → scanned element → locator record → version → scan.
+ */
+export interface StepLocatorReference {
+  id: string;
+  projectId: string;
+  testCaseId: string;
+  testStepId: string;
+  stepSequence: number;
+  testStepText: string;
+  generatedAutomationId: string;
+  generatedFileId: string | null;
+  scannedElementId: string;
+  elementName: string;
+  pageName: string;
+  pageUrlPattern: string;
+  locatorId: string;
+  locatorVersion: number;
+  scanId: string | null;
+  strategy: LocatorStrategy;
+  elementMatchConfidence: number;
+  locatorConfidence: number;
+  validationStatus: LocatorStatus;
+  source: LocatorResolutionSource;
+  generatedExpression: string;
+  matchRationale: Record<string, unknown> | null;
+  validatedAt: string | null;
+  resolvedAt: string;
+  createdAt: string;
+}
+
+/** Result of resolving one test case's steps against the locator library. */
+export interface LocatorResolutionResult {
+  testCaseId: string;
+  caseKey: string;
+  status:
+    | 'RESOLVED'
+    | 'PARTIALLY_RESOLVED'
+    | 'NO_APPROVED_MATCH'
+    /** Legacy value from before the review stage was removed. */
+    | 'LOCATOR_REVIEW_REQUIRED';
+  resolvedSteps: {
+    testStepId: string;
+    sequence: number;
+    description: string;
+    elementName: string;
+    pageName: string;
+    locatorId: string;
+    locatorVersion: number;
+    strategy: LocatorStrategy;
+    expression: string;
+    pythonExpression: string;
+    elementMatchConfidence: number;
+    locatorConfidence: number;
+    validationStatus: LocatorStatus;
+    validatedAt: string | null;
+    source: LocatorResolutionSource;
+    awaitingApproval: boolean;
+    revalidated: boolean;
+  }[];
+  unresolvedSteps: UnresolvedStep[];
+  timings: {
+    lookupMs: number;
+    matchingMs: number;
+    revalidationMs: number;
+    llmFallbackMs: number;
+    rescanMs: number;
+    totalMs: number;
+  };
+  revalidatedLocatorIds: string[];
+  warnings: string[];
 }
 
 /** Standard error contract (FR-BE-001). */

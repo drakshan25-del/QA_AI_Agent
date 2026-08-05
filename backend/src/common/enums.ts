@@ -212,6 +212,155 @@ export const EXECUTION_STAGES = [
 ] as const;
 export type ExecutionStage = (typeof EXECUTION_STAGES)[number];
 
+/**
+ * UI Scanner lifecycle (FR-UIS-003). One closed vocabulary shared verbatim by
+ * the engine (`engine/uiscanner/types.py`), this backend and the React UI, so
+ * a stage never has to be translated between tiers.
+ */
+export const UI_SCAN_STAGES = [
+  'IDLE',
+  'QUEUED',
+  'STARTING_BROWSER',
+  'NAVIGATING',
+  'AUTHENTICATING',
+  'WAITING_FOR_PAGE',
+  'SCANNING_DOM',
+  'SCANNING_FRAMES',
+  'CAPTURING_ACCESSIBILITY',
+  'GENERATING_LOCATORS',
+  'VALIDATING_LOCATORS',
+  'CAPTURING_SCREENSHOT',
+  'SAVING_RESULTS',
+  'COMPLETED',
+  'CANCELLED',
+  'FAILED',
+] as const;
+export type UiScanStage = (typeof UI_SCAN_STAGES)[number];
+
+export const UI_SCAN_TERMINAL_STAGES: readonly UiScanStage[] = [
+  'COMPLETED',
+  'CANCELLED',
+  'FAILED',
+];
+
+/** Locator generation strategies, best-first (FR-UIS-009). */
+export const LOCATOR_STRATEGIES = [
+  'role',
+  'label',
+  'testId',
+  'placeholder',
+  'text',
+  'scopedRole',
+  'name',
+  'css',
+  'xpath',
+] as const;
+export type LocatorStrategy = (typeof LOCATOR_STRATEGIES)[number];
+
+/** Where a locator came from — deterministic scan, model fallback or a human. */
+export const LOCATOR_SOURCES = [
+  'deterministic-scanner',
+  'llm-fallback',
+  'manual',
+] as const;
+export type LocatorSource = (typeof LOCATOR_SOURCES)[number];
+
+/**
+ * Review state of one scanned element / locator (FR-UIS-018). `unique` and
+ * `multiple_matches` are produced by validation; the rest are human decisions.
+ */
+export const LOCATOR_STATUSES = [
+  'valid',
+  'unique',
+  'multiple_matches',
+  'invalid',
+  'needs_review',
+  'approved',
+  'rejected',
+  'manually_edited',
+] as const;
+export type LocatorStatus = (typeof LOCATOR_STATUSES)[number];
+
+/**
+ * Where a locator handed to automation generation came from (FR-UIS-025 §8).
+ *
+ * Deliberately separate from `LOCATOR_SOURCES`: that records how the *scanner*
+ * produced a locator, this records how *automation generation* obtained it. A
+ * model-assisted match of a step to an already-scanned element is
+ * `LLM_FALLBACK` even though the locator itself is deterministic — the
+ * uncertainty is in the matching, and that is what a reviewer needs to see.
+ */
+export const LOCATOR_RESOLUTION_SOURCES = [
+  'DETERMINISTIC_SCANNER',
+  'LLM_FALLBACK',
+  'MANUAL_EDIT',
+] as const;
+export type LocatorResolutionSource =
+  (typeof LOCATOR_RESOLUTION_SOURCES)[number];
+
+/**
+ * Outcome of resolving one test case's steps against the locator library.
+ *
+ * There is no review stage: a user's approval of a locator is final, and a
+ * step the matcher could not bind is a *diagnostic*, not a gate. Generation
+ * and execution proceed either way (FR-UIS-025 §2).
+ */
+export const LOCATOR_RESOLUTION_STATUSES = [
+  'RESOLVED',
+  'PARTIALLY_RESOLVED',
+  'NO_APPROVED_MATCH',
+] as const;
+export type LocatorResolutionStatus =
+  (typeof LOCATOR_RESOLUTION_STATUSES)[number];
+
+/**
+ * Historical resolution statuses mapped onto the current vocabulary.
+ *
+ * `LOCATOR_REVIEW_REQUIRED` was a blocking stage that no longer exists.
+ * Artefacts generated before it was removed still carry it, and they must read
+ * as a diagnostic rather than reappear as a gate (§6 backward compatibility).
+ */
+export function normaliseResolutionStatus(
+  status: string | null | undefined,
+): LocatorResolutionStatus {
+  if (status === 'LOCATOR_REVIEW_REQUIRED') return 'NO_APPROVED_MATCH';
+  return (LOCATOR_RESOLUTION_STATUSES as readonly string[]).includes(status ?? '')
+    ? (status as LocatorResolutionStatus)
+    : 'RESOLVED';
+}
+
+/**
+ * The interaction a test step performs. Derived deterministically from the
+ * step text and used to score role compatibility when matching a step to a
+ * scanned element (FR-UIS-025 §3) — a "fill" step can never match a button.
+ * `navigate`, `assert` and `wait` carry no UI target of their own.
+ */
+export const STEP_ACTIONS = [
+  'fill',
+  'click',
+  'check',
+  'select',
+  'press',
+  'hover',
+  'upload',
+  'navigate',
+  'assert',
+  'wait',
+] as const;
+export type StepAction = (typeof STEP_ACTIONS)[number];
+
+/** Step actions that need a locator; the rest are navigation or waiting. */
+export const LOCATOR_BEARING_ACTIONS: readonly StepAction[] = [
+  'fill',
+  'click',
+  'check',
+  'select',
+  'press',
+  'hover',
+  'upload',
+  'assert',
+];
+
 /** In-app notification types (FR-V3-ENT-007). */
 export const NOTIFICATION_TYPES = [
   'job.completed',
@@ -238,5 +387,8 @@ export type EventType =
   | 'execution.step'
   | 'execution.status'
   | 'execution.log'
+  | 'ui_scan.status'
+  | 'ui_scan.log'
+  | 'ui_scan.ready'
   | 'notification.new'
   | 'ci.status';

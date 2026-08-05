@@ -2,12 +2,14 @@ import {
   CI_RUN_TRANSITIONS,
   EXECUTION_TRANSITIONS,
   JOB_TRANSITIONS,
+  UI_SCAN_TRANSITIONS,
   VALIDATION_TRANSITIONS,
   assertTransition,
   canTransition,
   deriveArtefactState,
   isTerminalExecutionStatus,
   isTerminalJobStatus,
+  isTerminalUiScanStage,
   outcomeFromMetrics,
 } from './state-machines';
 import { ConflictAppException } from './errors';
@@ -95,5 +97,64 @@ describe('TC-{int} identifiers (FR-V3-TC-001/004)', () => {
     expect(formatTestCaseId(1, 4)).toBe('TC-0001');
     expect(formatTestCaseId(1234, 4)).toBe('TC-1234');
     expect(formatTestCaseId(12345, 4)).toBe('TC-12345');
+  });
+});
+
+describe('UI scan stages (FR-UIS-003)', () => {
+  it('moves forwards through the lifecycle', () => {
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'QUEUED', 'STARTING_BROWSER')).toBe(true);
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'NAVIGATING', 'SCANNING_DOM')).toBe(true);
+  });
+
+  it('allows optional stages to be skipped', () => {
+    // An anonymous scan never authenticates; screenshots can be turned off.
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'NAVIGATING', 'WAITING_FOR_PAGE')).toBe(
+      true,
+    );
+    expect(
+      canTransition(UI_SCAN_TRANSITIONS, 'VALIDATING_LOCATORS', 'SAVING_RESULTS'),
+    ).toBe(true);
+  });
+
+  it('never runs backwards', () => {
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'SCANNING_DOM', 'NAVIGATING')).toBe(false);
+    expect(() =>
+      assertTransition(UI_SCAN_TRANSITIONS, 'ui scan', 'SCANNING_DOM', 'QUEUED'),
+    ).toThrow(ConflictAppException);
+  });
+
+  it('allows signing in after the requested page has been scanned', () => {
+    // The scan opens the target URL first — often the login page — scans it,
+    // and only then signs in, so those controls are part of the result.
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'SCANNING_DOM', 'AUTHENTICATING')).toBe(
+      true,
+    );
+    expect(
+      canTransition(UI_SCAN_TRANSITIONS, 'VALIDATING_LOCATORS', 'AUTHENTICATING'),
+    ).toBe(true);
+    // …and scanning resumes afterwards.
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'AUTHENTICATING', 'SCANNING_DOM')).toBe(
+      true,
+    );
+    // A finished scan still never re-authenticates.
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'COMPLETED', 'AUTHENTICATING')).toBe(
+      false,
+    );
+  });
+
+  it('can end from any running stage', () => {
+    for (const stage of ['QUEUED', 'NAVIGATING', 'VALIDATING_LOCATORS'] as const) {
+      expect(canTransition(UI_SCAN_TRANSITIONS, stage, 'COMPLETED')).toBe(true);
+      expect(canTransition(UI_SCAN_TRANSITIONS, stage, 'CANCELLED')).toBe(true);
+      expect(canTransition(UI_SCAN_TRANSITIONS, stage, 'FAILED')).toBe(true);
+    }
+  });
+
+  it('treats the three end states as terminal', () => {
+    expect(isTerminalUiScanStage('COMPLETED')).toBe(true);
+    expect(isTerminalUiScanStage('CANCELLED')).toBe(true);
+    expect(isTerminalUiScanStage('FAILED')).toBe(true);
+    expect(isTerminalUiScanStage('SCANNING_DOM')).toBe(false);
+    expect(canTransition(UI_SCAN_TRANSITIONS, 'COMPLETED', 'SCANNING_DOM')).toBe(false);
   });
 });

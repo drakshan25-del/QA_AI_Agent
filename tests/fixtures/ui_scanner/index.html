@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>UI Scanner fixture — account</title>
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Primary">
+        <a href="/index.html">Home</a>
+        <a href="/reports.html">Reports</a>
+        <a href="/settings.html">Settings</a>
+        <!-- The crawl must refuse all three of these. -->
+        <a href="/logout.html">Log out</a>
+        <a href="/index.html?action=delete&amp;id=7">Delete account</a>
+        <a href="https://example.com/external">External site</a>
+      </nav>
+    </header>
+
+    <main>
+      <h1>Account</h1>
+
+      <!-- A login form: labels, placeholder, test id, password field. -->
+      <form aria-label="Sign in" id="login-form">
+        <fieldset>
+          <legend>Credentials</legend>
+          <label for="email">Email address</label>
+          <input id="email" name="email" type="email" placeholder="Enter email" />
+
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" value="not-a-real-secret" />
+
+          <button type="submit" data-testid="login-submit">Login</button>
+        </fieldset>
+      </form>
+
+      <!-- Two identically-named buttons in differently-named regions: the
+           scanner must resolve them with scoped semantic locators. -->
+      <section aria-label="Profile">
+        <h2>Profile</h2>
+        <label for="profile-name">Full name</label>
+        <input id="profile-name" name="fullName" type="text" />
+        <button type="button">Save</button>
+        <button type="button">Cancel</button>
+      </section>
+
+      <section aria-label="Billing">
+        <h2>Billing</h2>
+        <label for="billing-vat">VAT number</label>
+        <input id="billing-vat" name="vat" type="text" />
+        <button type="button">Save</button>
+        <button type="button">Cancel</button>
+      </section>
+
+      <!-- A dialog, open by default so a single scan sees it. -->
+      <div role="dialog" aria-label="Edit user">
+        <h2>Edit user</h2>
+        <label for="dialog-role">Role</label>
+        <select id="dialog-role" name="role">
+          <option value="qa">QA engineer</option>
+          <option value="dev">Developer</option>
+        </select>
+        <button type="button">Save</button>
+      </div>
+
+      <!-- Hidden element: only collected when hidden elements are included. -->
+      <button type="button" hidden id="hidden-action">Archive account</button>
+      <div style="display: none">
+        <button type="button">Invisible delete</button>
+      </div>
+
+      <!-- Framework-shaped ids the scanner must treat as unstable. -->
+      <button type="button" id="mui-4839201">Generated id button</button>
+      <div class="css-1a2b3c4">
+        <span data-cy="status-chip">Active</span>
+      </div>
+
+      <!-- A data table: every row has the same action buttons, so only a
+           row-scoped locator can address one of them. The row's accessible
+           name is built from its cells, which is where naive textContent
+           concatenation ("AliceEditView") stops matching Playwright. -->
+      <table aria-label="Team members">
+        <caption>Team members</caption>
+        <thead>
+          <tr><th>Name</th><th>Role</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Alice Baker</td><td>Engineer</td>
+            <td><button type="button">Edit</button><button type="button">View</button></td>
+          </tr>
+          <tr>
+            <td>Carl Diaz</td><td>Designer</td>
+            <td><button type="button">Edit</button><button type="button">View</button></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Decorative divider: role="separator" means "ignore me". -->
+      <hr role="separator" aria-orientation="horizontal" />
+
+      <!-- Decorative icon: the author declared it non-semantic, so the
+           scanner must not offer it as a testable element. -->
+      <a href="https://example.com/social">
+        <svg role="presentation" width="16" height="16"><circle cx="8" cy="8" r="8" /></svg>
+      </a>
+
+      <!-- Rendered after a tick, the way a single-page application mounts. -->
+      <div id="late-mount"></div>
+      <script>
+        window.setTimeout(() => {
+          const host = document.getElementById('late-mount');
+          host.innerHTML =
+            '<section aria-label="Notifications">' +
+            '<h2>Notifications</h2>' +
+            '<button type="button">Mark all read</button>' +
+            '</section>';
+        }, 250);
+      </script>
+
+      <!-- A frame with its own controls. -->
+      <iframe title="Payment" src="/frame.html" width="320" height="160"></iframe>
+    </main>
+  </body>
+</html>

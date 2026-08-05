@@ -29,6 +29,7 @@ import { EventsService } from '../events/events.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient, EngineSseEvent } from '../../engine/engine.client';
+import { LocatorUsageService } from '../ui-scanner/locator-usage.service';
 import { CreateExecutionDto, ExecutionSettingsDto } from './dto/execution.dto';
 import {
   ExecutionLoggerService,
@@ -105,6 +106,7 @@ export class ExecutionsService {
     private readonly config: ConfigService,
     private readonly engine: EngineClient,
     private readonly execLog: ExecutionLoggerService,
+    private readonly locatorUsage: LocatorUsageService,
   ) {}
 
   /** Stage-aware logger bound to a run (cached so the stage persists across
@@ -907,6 +909,13 @@ export class ExecutionsService {
       await this.results.save(rows);
     }
 
+    // Fold this run's outcomes into the UI Scanner locator metrics
+    // (FR-UIS-025 §15). Attribution is per generated file: a test node's id
+    // starts with the file it came from, so a failure is only charged to the
+    // locators that file was generated from — and only when the failure was
+    // the locator failing to resolve, never an application or data problem.
+    await this.updateLocatorMetrics(run, correlationId);
+
     if (!isTerminalExecutionStatus(run.status)) {
       run.status =
         run.status === 'stopping'
@@ -935,6 +944,57 @@ export class ExecutionsService {
     }
 
     this.forgetRun(runId);
+  }
+
+  /**
+   * Update locator execution metrics from a finished run (FR-UIS-025 §15).
+   *
+   * Never fatal: a metrics update that fails must not change the outcome of a
+   * run that has already produced its results.
+   */
+  private async updateLocatorMetrics(
+    run: ExecutionRun,
+    correlationId?: string,
+  ): Promise<void> {
+    try {
+      const automationIds = run.automationIds ?? [];
+      if (!automationIds.length) return;
+      const artifacts = await this.artifacts.find({
+        where: { id: In(automationIds) },
+      });
+      if (!artifacts.length) return;
+      const results = await this.results.find({
+        where: { executionRunId: run.id },
+      });
+      if (!results.length) return;
+
+      const outcomes = results.map((result) => {
+        // `nodeId` is `<path>::<test>`, so the file prefix identifies the
+        // artefact the test was generated into.
+        const path = (result.nodeId || '').split('::')[0] ?? '';
+        const artifact = artifacts.find(
+          (a) => a.path === path || (path && a.path.endsWith(path)) || (path && path.endsWith(a.path)),
+        );
+        return {
+          artifactIds: artifact ? [artifact.id] : automationIds,
+          testCaseIds: artifact?.testCaseIds ?? [],
+          outcome: result.outcome,
+          errorMessage: result.errorMessage,
+        };
+      });
+      const { updated, locatorFailures } =
+        await this.locatorUsage.recordExecutionOutcome(run.projectId, outcomes);
+      if (locatorFailures) {
+        this.logger.warn(
+          `run ${run.id}: ${locatorFailures} locator-related failure(s) recorded ` +
+            `across ${updated} locator(s) [${correlationId ?? '-'}]`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `locator metrics update skipped for run ${run.id}: ${(err as Error).message}`,
+      );
+    }
   }
 
   /** Emit the final Completed/Failed log line for a settled run. */

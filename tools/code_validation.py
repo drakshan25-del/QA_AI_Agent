@@ -510,7 +510,39 @@ def check_locator_policy(code: str, filename: str) -> list[ValidationIssue]:
                 location=filename,
             )
         )
+
+    issues.extend(check_unmatched_locator_notes(code, filename))
     return issues
+
+
+#: Note the automation agent emits for a step no approved locator matched.
+_UNMATCHED_NOTE = "NO APPROVED LOCATOR MATCHED"
+
+
+def check_unmatched_locator_notes(code: str, filename: str) -> list[ValidationIssue]:
+    """Report steps no approved locator covered — as a warning, never a block.
+
+    A user's approval of a locator is final, and a step the matcher could not
+    cover is a gap in the scan, not a defect in the generated code. It is worth
+    surfacing so the missing page can be scanned, but it must not stop the file
+    from being approved or executed (§4, §5): the steps that did match are
+    real, and blocking them helps nobody.
+    """
+    if not _is_test_file(filename) or _UNMATCHED_NOTE not in code:
+        return []
+    count = code.count(_UNMATCHED_NOTE)
+    return [
+        ValidationIssue(
+            check="locators",
+            severity="warning",
+            message=(
+                f"{count} test step(s) had no approved UI Scanner locator and were "
+                "left out of the generated test. Scan the page those steps act on "
+                "and approve its locators to cover them."
+            ),
+            location=filename,
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------

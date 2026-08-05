@@ -19,9 +19,21 @@ export const qk = {
   automation: (projectId: string) => ['projects', projectId, 'automation'] as const,
   automationItem: (id: string) => ['automation', id] as const,
   executionPlan: (id: string) => ['automation', id, 'execution-plan'] as const,
+  /** UI Scanner locators a generated file was built from (FR-UIS-025 §10). */
+  automationLocators: (id: string) => ['automation', id, 'locator-references'] as const,
   execution: (id: string) => ['executions', id] as const,
   executionEvents: (id: string) => ['executions', id, 'events'] as const,
   executionReport: (id: string) => ['executions', id, 'report'] as const,
+  uiScans: (projectId: string) => ['projects', projectId, 'ui-scans'] as const,
+  uiScan: (projectId: string, scanId: string) =>
+    ['projects', projectId, 'ui-scans', scanId] as const,
+  uiScanElements: (projectId: string, scanId: string) =>
+    ['projects', projectId, 'ui-scans', scanId, 'elements'] as const,
+  uiScanMetrics: (projectId: string) =>
+    ['projects', projectId, 'ui-scans', 'metrics'] as const,
+  uiScanStorageStates: (projectId: string) =>
+    ['projects', projectId, 'ui-scan-storage-states'] as const,
+  locators: (projectId: string) => ['projects', projectId, 'locators'] as const,
   jobs: (projectId: string) => ['projects', projectId, 'jobs'] as const,
   job: (id: string) => ['jobs', id] as const,
   audit: (filter: AuditFilter) => ['audit', filter] as const,

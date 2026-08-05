@@ -4,7 +4,7 @@ from automation.pages.base_page import BasePage
 
 
 class SampleLoginPage(BasePage):
-    """Page object for https://practicetestautomation.com/practice-test-login/.
+    """Page object for https://practicetestautomation.com/practice-test-login.
 
     The project ``base_url`` is already the full login-page URL, so navigation
     goes straight to it — no extra path is appended.
@@ -26,6 +26,7 @@ class SampleLoginPage(BasePage):
 
     def login(self, username: str, password: str) -> None:
         self.open()
-        self.fill(self.username_field, username, label="Username")
-        self.fill(self.password_field, password, label="Password")
-        self.click(self.submit_button, label="Submit")
+        self.fill(self.username_field, username, name="Username")
+        self.fill(self.password_field, password, name="Password")
+        self.click(self.submit_button, type="Submit")
+        self.assert_contains_text(self.success_heading, "Logged In Successfully", name="Success Heading")

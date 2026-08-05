@@ -22,6 +22,11 @@ import { JobLogEntry } from './job-log-entry.entity';
 import { Notification } from './notification.entity';
 import { ProjectSequence } from './project-sequence.entity';
 import { EventSubscription } from './event-subscription.entity';
+import { UiScan } from './ui-scan.entity';
+import { ScannedElement } from './scanned-element.entity';
+import { LocatorRecord } from './locator-record.entity';
+import { UiScanLogEntry } from './ui-scan-log-entry.entity';
+import { StepLocatorReference } from './step-locator-reference.entity';
 
 export const ALL_ENTITIES = [
   User,
@@ -48,6 +53,11 @@ export const ALL_ENTITIES = [
   Notification,
   ProjectSequence,
   EventSubscription,
+  UiScan,
+  ScannedElement,
+  LocatorRecord,
+  UiScanLogEntry,
+  StepLocatorReference,
 ];
 
 export {
@@ -75,4 +85,9 @@ export {
   Notification,
   ProjectSequence,
   EventSubscription,
+  UiScan,
+  ScannedElement,
+  LocatorRecord,
+  UiScanLogEntry,
+  StepLocatorReference,
 };

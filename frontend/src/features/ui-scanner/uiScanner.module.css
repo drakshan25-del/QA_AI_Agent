@@ -1,0 +1,310 @@
+/* UI Scanner styling. Uses the app's existing design tokens only, so the
+   section is indistinguishable from the rest of the Analysis page. */
+
+.formGrid {
+  display: grid;
+  gap: 0 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 4px 0 14px;
+}
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.toggle input {
+  accent-color: var(--primary);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* --- progress ---------------------------------------------------------- */
+
+.stageRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.stageName {
+  font-weight: 600;
+  font-size: 15px;
+}
+.stageMeta {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.counter {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: var(--surface-2);
+}
+.counterValue {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.counterLabel {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  margin-top: 1px;
+}
+
+/* --- log console ------------------------------------------------------- */
+
+.console {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.consoleBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.levelFilters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.levelChip {
+  cursor: pointer;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.levelChipOn {
+  color: var(--primary-contrast);
+  background: currentColor;
+}
+.logList {
+  list-style: none;
+  margin: 0;
+  padding: 6px 12px 12px;
+  max-height: 340px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.logRow {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.logTime {
+  opacity: 0.55;
+}
+.logLevel {
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.logStage {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* --- results table ----------------------------------------------------- */
+
+.tableScroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.resultsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.resultsTable th {
+  text-align: left;
+  padding: 9px 10px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.resultsTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.resultsTable tbody tr:hover {
+  background: var(--surface-2);
+}
+.rowButton {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.detailCell {
+  background: var(--surface-2);
+}
+.elementName {
+  font-weight: 600;
+}
+.elementSub {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+/* Long locator code must scroll inside its own box, never widen the page. */
+.code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  overflow-x: auto;
+  white-space: pre;
+  max-width: 100%;
+  margin: 0;
+}
+.codeInline {
+  display: block;
+  max-width: 420px;
+}
+.tok {
+  color: var(--primary);
+}
+.tokString {
+  color: var(--ok);
+}
+.tokPunct {
+  color: var(--text-muted);
+}
+
+.confidenceBar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  min-width: 56px;
+  margin-top: 3px;
+}
+.confidenceFill {
+  height: 100%;
+}
+
+.candidateList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.candidate {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--surface);
+}
+.candidateHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.reasonList {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 16px;
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+.metaKey {
+  color: var(--text-muted);
+}
+
+/* --- screenshot -------------------------------------------------------- */
+
+.shotWrap {
+  position: relative;
+  overflow: auto;
+  max-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.shot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.shotFrame {
+  position: relative;
+  display: inline-block;
+}
+.highlight {
+  position: absolute;
+  border: 2px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  pointer-events: none;
+  border-radius: 2px;
+}
+
+.snapshot {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+  overflow: auto;
+  max-height: 420px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.mark {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 2px;
+}

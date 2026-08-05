@@ -15,11 +15,16 @@ import { DiffViewer } from '../components/DiffViewer';
 import { ApprovalControls } from '../features/approvals/ApprovalControls';
 import { RunLauncher } from '../features/executions/RunLauncher';
 import { ValidationFindings } from '../features/automation/ValidationFindings';
+import { executionGate } from '../features/automation/executionGate';
+import { LocatorTraceabilityPanel } from '../features/automation/LocatorTraceabilityPanel';
 import { useProjectId } from '../features/projects/hooks';
 import { useProjectEvents } from '../hooks/useProjectEvents';
 import { automationApi, testCasesApi } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
-import type { ApprovalDecision, GeneratedArtifact } from '../services/api/types';
+import type {
+  ApprovalDecision,
+  GeneratedArtifact,
+} from '../services/api/types';
 import { toDisplayString } from '../lib/sanitize';
 import L from '../styles/layout.module.css';
 import s from '../features/automation/automation.module.css';
@@ -69,6 +74,7 @@ function ExecutionPlanTab({ artifactId }: { artifactId: string }): JSX.Element {
     </QueryState>
   );
 }
+
 
 function ArtifactDetail({
   artifact,
@@ -164,11 +170,10 @@ function ArtifactDetail({
     onSuccess: invalidate,
   });
 
-  const validated = ['passed', 'passed_with_warnings', 'overridden'].includes(
-    artifact.validationStatus,
-  );
-  const runnable =
-    artifact.approvalStatus === 'approved' && artifact.status === 'active' && validated;
+  // Execution is gated on approval, validation and genuine blockers alone.
+  // Locator coverage is reported, never enforced (§5).
+  const gate = executionGate({ artifact, generating: !!validationJobId });
+  const runnable = gate.enabled;
   const traceEntries = Object.entries(artifact.traceability ?? {});
 
   return (
@@ -244,7 +249,7 @@ function ArtifactDetail({
           projectId={projectId}
           automationIds={[artifact.id]}
           disabled={!runnable}
-          disabledReason="Automation must be approved and validated before execution (FR-AUT-010)."
+          disabledReason={gate.reason}
         />
       </Card>
 
@@ -302,6 +307,7 @@ function ArtifactDetail({
                 </Banner>
               )}
               <LazyCodeEditor path={artifact.path} value={draft} onChange={setDraft} />
+              <LocatorTraceabilityPanel artifact={artifact} projectId={projectId} />
             </div>
           )}
           {tab === 'diff' && <DiffViewer diff={artifact.diff} />}

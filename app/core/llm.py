@@ -59,6 +59,13 @@ def get_chat_model(
         "model": model or settings.llm_model,
         "temperature": settings.llm_temperature if temperature is None else temperature,
         "base_url": settings.ollama_base_url,
+        # Ollama defaults to a 2048-token context. The generation prompts are
+        # larger than that on their own, and an overflowing context is dropped
+        # silently: the model loses the head of its instructions and runs out
+        # of room mid-answer, which surfaces as truncated, unparseable code
+        # rather than as an error. Both bounds are therefore explicit.
+        "num_ctx": settings.llm_context_tokens,
+        "num_predict": settings.llm_max_output_tokens,
         # Bound every model call's wall clock (§17 model errors): a hung
         # Ollama request must fail loudly instead of pinning a worker thread.
         "client_kwargs": {"timeout": settings.llm_timeout_seconds},

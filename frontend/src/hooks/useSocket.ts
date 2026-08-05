@@ -8,8 +8,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
+import { ensureFreshToken } from '../services/api/client';
 import { config } from '../services/api/config';
-import { tokenStore } from '../services/api/tokenStore';
 import type { EventEnvelope } from '../services/api/types';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
@@ -47,16 +47,20 @@ export function useSocket({
 
     // Room scope comes from the handshake query, so each scope needs its own
     // socket (forceNew) — but auth MUST be a function: socket.io re-invokes it
-    // on every (re)connect, so reconnects after the 15-min access-token
-    // rotation present a fresh JWT instead of replaying the expired one.
-    // The token never goes in the query string (it would end up in proxy and
-    // access logs, SEC-007).
+    // on every (re)connect. It resolves through `ensureFreshToken`, which
+    // refreshes an expired or nearly-expired token *before* handing it over;
+    // reading the store directly would replay the stale JWT on every retry and
+    // the gateway would reject the handshake until some unrelated HTTP request
+    // happened to refresh it. The token never goes in the query string (it
+    // would end up in proxy and access logs, SEC-007).
     const socket: Socket = io(config.wsBase, {
       path: '/api/v2/events',
       transports: ['websocket'],
       withCredentials: true,
       forceNew: true,
-      auth: (cb) => cb({ token: tokenStore.get() ?? '' }),
+      auth: (cb) => {
+        void ensureFreshToken().then((token) => cb({ token: token ?? '' }));
+      },
       query,
       reconnection: true,
       reconnectionAttempts: Infinity,

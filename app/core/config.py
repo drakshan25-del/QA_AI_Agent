@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.1
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 2
+    #: Context window handed to Ollama. Its own default is 2048 tokens, which
+    #: the code-generation prompt alone exceeds — the model then loses the
+    #: start of its instructions and emits a file that stops mid-expression.
+    llm_context_tokens: int = 8192
+    #: Upper bound on generated tokens; a full test module needs room.
+    llm_max_output_tokens: int = 4096
 
     # Target application under test
     target_base_url: str = "http://localhost:8001"

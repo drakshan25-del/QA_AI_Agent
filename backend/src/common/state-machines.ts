@@ -10,6 +10,9 @@ import {
   CiRunStatus,
   ExecutionStatus,
   JobStatus,
+  UI_SCAN_STAGES,
+  UI_SCAN_TERMINAL_STAGES,
+  UiScanStage,
   ValidationStatus,
 } from './enums';
 import { ConflictAppException } from './errors';
@@ -80,6 +83,41 @@ export const CI_RUN_TRANSITIONS: TransitionMap<CiRunStatus> = {
   failed: [],
   cancelled: [],
 };
+
+/**
+ * UI scan stages (FR-UIS-003). The scan walks the ordered stage list forwards —
+ * stages may be skipped (an unauthenticated scan never enters AUTHENTICATING,
+ * a scan with screenshots disabled never enters CAPTURING_SCREENSHOT) but never
+ * run backwards — and any non-terminal stage may end in COMPLETED, CANCELLED
+ * or FAILED. Derived from the ordered list so the map cannot drift out of sync
+ * with the vocabulary the engine and the UI share.
+ */
+export const UI_SCAN_TRANSITIONS: TransitionMap<UiScanStage> = Object.freeze(
+  UI_SCAN_STAGES.reduce(
+    (map, stage, index) => {
+      if (UI_SCAN_TERMINAL_STAGES.includes(stage)) {
+        map[stage] = [];
+        return map;
+      }
+      const forward = UI_SCAN_STAGES.slice(index + 1);
+      // AUTHENTICATING is the one stage that is not a point in the sequence.
+      // A scan signs in *after* scanning the page it was pointed at — so the
+      // login page's own controls are captured — and may need to sign in again
+      // if a session expires part-way through a crawl. Everything else stays
+      // strictly forward-only.
+      map[stage] = forward.includes('AUTHENTICATING')
+        ? forward
+        : ['AUTHENTICATING', ...forward];
+      return map;
+    },
+    {} as Record<UiScanStage, readonly UiScanStage[]>,
+  ),
+);
+
+/** True when the scan can no longer progress. */
+export function isTerminalUiScanStage(stage: UiScanStage): boolean {
+  return UI_SCAN_TERMINAL_STAGES.includes(stage);
+}
 
 export function canTransition<S extends string>(
   map: TransitionMap<S>,

@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { ExecutionEvent, JobLogEntry } from '../../entities';
+import { ExecutionEvent, JobLogEntry, UiScanLogEntry } from '../../entities';
 import { AppConfig } from '../../config/configuration';
 import { AuditService } from '../audit/audit.service';
 
@@ -24,6 +24,8 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     private readonly jobLogs: Repository<JobLogEntry>,
     @InjectRepository(ExecutionEvent)
     private readonly executionEvents: Repository<ExecutionEvent>,
+    @InjectRepository(UiScanLogEntry)
+    private readonly uiScanLogs: Repository<UiScanLogEntry>,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
   ) {}
@@ -60,6 +62,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     const { jobLogDays, executionEventDays, evidenceDays } = this.policy;
     const removed: Record<string, number> = {
       jobLogs: 0,
+      uiScanLogs: 0,
       executionEvents: 0,
       evidenceDirs: 0,
     };
@@ -69,6 +72,12 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
           createdAt: LessThan(daysAgo(jobLogDays)),
         });
         removed.jobLogs = res.affected ?? 0;
+        // UI-scan console lines are the same kind of record as job logs, so
+        // they follow the same window rather than growing forever.
+        const scanRes = await this.uiScanLogs.delete({
+          createdAt: LessThan(daysAgo(jobLogDays)),
+        });
+        removed.uiScanLogs = scanRes.affected ?? 0;
       }
       if (executionEventDays > 0) {
         const res = await this.executionEvents.delete({
@@ -79,7 +88,12 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       if (evidenceDays > 0) {
         removed.evidenceDirs = await this.sweepEvidence(daysAgo(evidenceDays));
       }
-      if (removed.jobLogs || removed.executionEvents || removed.evidenceDirs) {
+      if (
+        removed.jobLogs ||
+        removed.uiScanLogs ||
+        removed.executionEvents ||
+        removed.evidenceDirs
+      ) {
         await this.audit.record({
           actor: 'system',
           actorId: null,

@@ -14,6 +14,7 @@ import {
   ExecutionsController,
   ProjectExecutionsController,
 } from './executions.controller';
+import { UiScannerModule } from '../ui-scanner/ui-scanner.module';
 
 @Module({
   imports: [
@@ -25,6 +26,8 @@ import {
       GeneratedArtifact,
       Project,
     ]),
+    // A finished run feeds the locator execution metrics (FR-UIS-025 §15).
+    UiScannerModule,
   ],
   controllers: [ExecutionsController, ProjectExecutionsController],
   providers: [ExecutionsService, ExecutionLoggerService],

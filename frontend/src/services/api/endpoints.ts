@@ -42,6 +42,15 @@ import type {
   ApprovalDecision,
   ApprovalResourceType,
   FindingClassification,
+  LocatorData,
+  LocatorRecord,
+  LocatorResolutionResult,
+  ProjectLocatorMetrics,
+  ScannedElement,
+  StartUiScanInput,
+  StepLocatorReference,
+  UiScan,
+  UiScanLogRow,
 } from './types';
 
 // ---- Auth (V2_CONTRACT §2 Auth) --------------------------------------------
@@ -384,6 +393,19 @@ export const automationApi = {
     const { data } = await http.get<ExecutionPlan>(`/automation/${id}/execution-plan`);
     return data;
   },
+  /**
+   * The UI Scanner locators this generated file was built from (§10).
+   *
+   * Read from the persisted traceability rows, so the panel reflects the
+   * locator's current version and validation status rather than a snapshot
+   * frozen at generation time.
+   */
+  async locatorReferences(id: string): Promise<StepLocatorReference[]> {
+    const { data } = await http.get<StepLocatorReference[]>(
+      `/automation/${id}/locator-references`,
+    );
+    return data;
+  },
   /** Governed validation exception (FR-V3-ENT-002, §23.3). */
   async overrideValidation(
     id: string,
@@ -464,6 +486,292 @@ export const executionsApi = {
     format: 'pdf' | 'html' | 'json' | 'junit' | 'csv',
   ): string {
     return `/executions/${id}/report/export?format=${format}`;
+  },
+};
+
+// ---- UI Scanner (FR-UIS-*) -------------------------------------------------
+
+export const uiScannerApi = {
+  /**
+   * Start a scan. `username`/`password` are single-use credentials for the
+   * target application: the backend forwards them to the browser session and
+   * never stores, logs or returns them (§16).
+   */
+  async start(
+    projectId: string,
+    input: StartUiScanInput,
+  ): Promise<{ id: string; status: string; url: string }> {
+    const { data } = await http.post(`/projects/${projectId}/ui-scans`, input);
+    return data as { id: string; status: string; url: string };
+  },
+  async list(projectId: string): Promise<UiScan[]> {
+    const { data } = await http.get<UiScan[]>(`/projects/${projectId}/ui-scans`);
+    return data;
+  },
+  async get(projectId: string, scanId: string): Promise<UiScan> {
+    const { data } = await http.get<UiScan>(
+      `/projects/${projectId}/ui-scans/${scanId}`,
+    );
+    return data;
+  },
+  async cancel(
+    projectId: string,
+    scanId: string,
+  ): Promise<{ id: string; cancelled: boolean; status: string }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/ui-scans/${scanId}/cancel`,
+      {},
+    );
+    return data as { id: string; cancelled: boolean; status: string };
+  },
+  async rescan(
+    projectId: string,
+    scanId: string,
+    input: Partial<StartUiScanInput> = {},
+  ): Promise<{ id: string; status: string; url: string }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/ui-scans/${scanId}/rescan`,
+      input,
+    );
+    return data as { id: string; status: string; url: string };
+  },
+  /** Persisted log replay for the console seed and reconnect gap. */
+  async logs(
+    projectId: string,
+    scanId: string,
+    fromSeq = 0,
+  ): Promise<UiScanLogRow[]> {
+    const { data } = await http.get<UiScanLogRow[]>(
+      `/projects/${projectId}/ui-scans/${scanId}/logs`,
+      { params: { fromSeq } },
+    );
+    return data;
+  },
+  async elements(
+    projectId: string,
+    scanId: string,
+    filter: { status?: string; q?: string } = {},
+  ): Promise<ScannedElement[]> {
+    const { data } = await http.get<ScannedElement[]>(
+      `/projects/${projectId}/ui-scans/${scanId}/elements`,
+      { params: filter },
+    );
+    return data;
+  },
+  /** Artefact URLs are relative to the API base and require the bearer token. */
+  screenshotUrl(projectId: string, scanId: string): string {
+    return `/projects/${projectId}/ui-scans/${scanId}/artifacts/screenshot`;
+  },
+  accessibilityUrl(projectId: string, scanId: string): string {
+    return `/projects/${projectId}/ui-scans/${scanId}/artifacts/accessibility`;
+  },
+  async accessibilitySnapshot(projectId: string, scanId: string): Promise<string> {
+    const { data } = await http.get<string>(
+      `/projects/${projectId}/ui-scans/${scanId}/artifacts/accessibility`,
+      { responseType: 'text' },
+    );
+    return data;
+  },
+  /** Re-validate one element's locator against the live page. */
+  async validateElement(
+    projectId: string,
+    scanId: string,
+    elementId: string,
+    input: {
+      candidateId?: string;
+      url?: string;
+      loginUrl?: string;
+      username?: string;
+      password?: string;
+    } = {},
+  ): Promise<ScannedElement> {
+    const { data } = await http.post<ScannedElement>(
+      `/projects/${projectId}/ui-scans/${scanId}/elements/${elementId}/validate`,
+      input,
+    );
+    return data;
+  },
+  /** Replace an element's locator with a hand-edited (structural) one. */
+  async updateLocator(
+    projectId: string,
+    scanId: string,
+    elementId: string,
+    locatorData: LocatorData,
+    elementName?: string,
+  ): Promise<ScannedElement> {
+    const { data } = await http.patch<ScannedElement>(
+      `/projects/${projectId}/ui-scans/${scanId}/elements/${elementId}/locator`,
+      { locatorData, elementName },
+    );
+    return data;
+  },
+  async approveElement(
+    projectId: string,
+    scanId: string,
+    elementId: string,
+    input: { approved?: boolean; candidateId?: string } = {},
+  ): Promise<ScannedElement> {
+    const { data } = await http.post<ScannedElement>(
+      `/projects/${projectId}/ui-scans/${scanId}/elements/${elementId}/approve`,
+      input,
+    );
+    return data;
+  },
+  async approveHighConfidence(
+    projectId: string,
+    scanId: string,
+    input: { minConfidence?: number; uniqueOnly?: boolean } = {},
+  ): Promise<{ approved: number; skipped: number; minConfidence: number }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/ui-scans/${scanId}/approve-high-confidence`,
+      input,
+    );
+    return data as { approved: number; skipped: number; minConfidence: number };
+  },
+  async saveLocators(
+    projectId: string,
+    scanId: string,
+    input: { elementIds?: string[]; pageName?: string } = {},
+  ): Promise<{ saved: number; superseded: number }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/ui-scans/${scanId}/save-locators`,
+      input,
+    );
+    return data as { saved: number; superseded: number };
+  },
+  async metrics(projectId: string): Promise<ProjectLocatorMetrics> {
+    const { data } = await http.get<ProjectLocatorMetrics>(
+      `/projects/${projectId}/ui-scans/metrics`,
+    );
+    return data;
+  },
+  async locators(
+    projectId: string,
+    filter: { pageUrlPattern?: string; approvedOnly?: string } = {},
+  ): Promise<LocatorRecord[]> {
+    const { data } = await http.get<LocatorRecord[]>(
+      `/projects/${projectId}/locators`,
+      { params: filter },
+    );
+    return data;
+  },
+  /** Authentication states available to the project (ids only, §16). */
+  async storageStates(projectId: string): Promise<{ id: string; label: string }[]> {
+    const { data } = await http.get<{ id: string; label: string }[]>(
+      `/projects/${projectId}/ui-scan-storage-states`,
+    );
+    return data;
+  },
+};
+
+// ---- Locator resolution (FR-UIS-025 §16) -----------------------------------
+
+/**
+ * Binding test steps to scanned locators.
+ *
+ * `resolveBatch` is the preferred call: one library read and one grouped
+ * revalidation pass for a whole set of test cases, rather than a round trip per
+ * step.
+ */
+export const locatorsApi = {
+  async resolve(
+    projectId: string,
+    input: {
+      testCaseId?: string;
+      pageName?: string;
+      steps?: { testStepId: string; description: string; action?: string }[];
+      revalidate?: boolean;
+      allowTargetedRescan?: boolean;
+      allowLlmMatching?: boolean;
+    },
+  ): Promise<LocatorResolutionResult> {
+    const { data } = await http.post<LocatorResolutionResult>(
+      `/projects/${projectId}/locators/resolve`,
+      input,
+    );
+    return data;
+  },
+  async resolveBatch(
+    projectId: string,
+    testCaseIds: string[],
+    options: { revalidate?: boolean; allowTargetedRescan?: boolean } = {},
+  ): Promise<{
+    results: LocatorResolutionResult[];
+    resolvedCount: number;
+    unresolvedCount: number;
+  }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/locators/resolve-batch`,
+      { testCaseIds, ...options },
+    );
+    return data as {
+      results: LocatorResolutionResult[];
+      resolvedCount: number;
+      unresolvedCount: number;
+    };
+  },
+  /** Re-validate stored locators against the live application (§5). */
+  async revalidate(
+    projectId: string,
+    locatorIds: string[],
+  ): Promise<{
+    results: {
+      locatorId: string;
+      matchCount: number;
+      unique: boolean;
+      validationStatus: string;
+      error?: string;
+    }[];
+  }> {
+    const { data } = await http.post(
+      `/projects/${projectId}/locators/revalidate`,
+      { locatorIds },
+    );
+    return data as {
+      results: {
+        locatorId: string;
+        matchCount: number;
+        unique: boolean;
+        validationStatus: string;
+        error?: string;
+      }[];
+    };
+  },
+  async get(projectId: string, locatorId: string): Promise<LocatorRecord> {
+    const { data } = await http.get<LocatorRecord>(
+      `/projects/${projectId}/locators/${locatorId}`,
+    );
+    return data;
+  },
+  /** Where a locator is used and how it has behaved when executed (§15). */
+  async usage(
+    projectId: string,
+    locatorId: string,
+  ): Promise<{
+    locatorId: string;
+    usageCount: number;
+    lastUsedAt: string | null;
+    executionSuccessCount: number;
+    executionFailureCount: number;
+    lastExecutedAt: string | null;
+    lastFailureReason: string;
+    locatorFailure: boolean;
+    references: StepLocatorReference[];
+  }> {
+    const { data } = await http.get(
+      `/projects/${projectId}/locators/${locatorId}/usage`,
+    );
+    return data as {
+      locatorId: string;
+      usageCount: number;
+      lastUsedAt: string | null;
+      executionSuccessCount: number;
+      executionFailureCount: number;
+      lastExecutedAt: string | null;
+      lastFailureReason: string;
+      locatorFailure: boolean;
+      references: StepLocatorReference[];
+    };
   },
 };
 

@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 
 from agents import (
     automation_agent,
+    locator_match_agent,
     report_agent,
     requirement_agent,
     result_analysis_agent,
@@ -51,9 +52,33 @@ from engine.contracts.schemas import (
     ParseResponse,
 )
 from engine.parsers.excel import ExcelParseError, parse_excel
-from engine.service import eventbus, execution
+from engine.service import eventbus, execution, ui_scan
 from engine.service.report_adapter import to_report_data
+from engine.uiscanner.revalidate import revalidate_locators
+from engine.uiscanner.types import UI_SCAN_SCHEMA_VERSION
+from engine.uiscanner.types import UiScanError
 from tools.file_ingestion import IngestionError, parse_document
+
+#: When this process imported its code. Compared against the newest source
+#: file below so a running engine can say whether it is serving stale code —
+#: the failure mode where an edit "has no effect" because uvicorn was started
+#: without --reload, and which is otherwise only diagnosable by guesswork.
+_LOADED_AT = time.time()
+
+
+def _source_mtime() -> float:
+    """Newest modification time across the engine's own Python sources."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    newest = 0.0
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if name.endswith(".py"):
+                try:
+                    newest = max(newest, os.path.getmtime(os.path.join(dirpath, name)))
+                except OSError:
+                    continue
+    return newest
+
 
 ENGINE_TOKEN = os.environ.get("ENGINE_TOKEN", "dev-engine-token")
 ENGINE_PORT = int(os.environ.get("ENGINE_PORT", "8100"))
@@ -116,7 +141,22 @@ def health() -> dict:
         pw = "ok"
     except Exception as exc:  # noqa: BLE001
         pw = f"error: {exc}"
-    return {"status": "ok", "schema_version": SCHEMA_VERSION, "ollama": ollama, "playwright": pw}
+    source_mtime = _source_mtime()
+    return {
+        "status": "ok",
+        "schema_version": SCHEMA_VERSION,
+        "ollama": ollama,
+        "playwright": pw,
+        # `stale: true` means the source has changed since this process loaded
+        # it: restart the engine (or run it with --reload) before concluding
+        # that a fix did not work.
+        "code": {
+            "loadedAt": _LOADED_AT,
+            "sourceModifiedAt": source_mtime,
+            "stale": source_mtime > _LOADED_AT,
+            "uiScannerSchema": UI_SCAN_SCHEMA_VERSION,
+        },
+    }
 
 
 # --- document parsing (FR-IN-002/008) --------------------------------------
@@ -225,17 +265,81 @@ def test_cases(body: dict = Body(...), x_engine_token: str | None = Header(defau
 @app.post("/internal/v1/automation", response_model=AutomationOutput)
 def automation(body: dict = Body(...), x_engine_token: str | None = Header(default=None),
                idempotency_key: str | None = Header(default=None)) -> AutomationOutput:
+    """Generate Playwright automation from resolved UI Scanner locators.
+
+    ``resolvedSteps`` binds each test step to a locator the scanner validated
+    (FR-UIS-025 §8); the agent may not use any other locator, and its output is
+    rejected if it does. ``approvedLocators`` remains accepted for callers on
+    the older contract.
+    """
     _auth(x_engine_token)
     cached = _idempotent(idempotency_key)
     if cached:
         return AutomationOutput.model_validate(cached)
     try:
         out = automation_agent.generate_automation(
-            body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""))
+            body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""),
+            approved_locators=body.get("approvedLocators") or [],
+            resolved_steps=body.get("resolvedSteps") or [],
+            unresolved_steps=body.get("unresolvedSteps") or [],
+            locator_comments=bool(body.get("locatorComments", True)),
+            model=body.get("model"), temperature=body.get("temperature"))
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        # The model never produced a usable answer. That is a job failure with
+        # an actionable reason, not an engine crash — a 500 tells the user
+        # nothing and buries the cause in a stack trace (§18).
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
     return out
+
+
+@app.post("/internal/v1/locators/match")
+def match_locators(body: dict = Body(...),
+                   x_engine_token: str | None = Header(default=None)) -> dict:
+    """Match test steps to already-scanned elements (FR-UIS-025 §2.5).
+
+    The model chooses between elements the scanner discovered and validated; it
+    never sees page HTML and never proposes a locator. Anything it returns that
+    was not offered is discarded here *and* re-checked by the backend.
+    """
+    _auth(x_engine_token)
+    steps = [
+        {
+            "test_step_id": str(s.get("testStepId") or s.get("test_step_id") or ""),
+            "description": str(s.get("description") or ""),
+            "action": str(s.get("action") or ""),
+            "page_name": str(s.get("pageName") or s.get("page_name") or ""),
+            "parent_context": str(s.get("parentContext") or s.get("parent_context") or ""),
+        }
+        for s in body.get("steps") or []
+    ]
+    # The backend addresses elements by locator id; the agent's contract calls
+    # that field `element_id`, so the mapping is done here rather than leaking
+    # either vocabulary into the other tier.
+    elements = [
+        {**{k: v for k, v in e.items() if k != "locatorId"},
+         "element_id": str(e.get("locatorId") or e.get("element_id") or "")}
+        for e in body.get("elements") or []
+    ]
+    try:
+        out = locator_match_agent.match_steps_to_elements(
+            steps, elements, model=body.get("model"), temperature=body.get("temperature"))
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "matches": [
+            {
+                "testStepId": m.test_step_id,
+                "locatorId": m.element_id,
+                "confidence": m.confidence,
+                "reason": m.reason,
+            }
+            for m in out.matches
+        ],
+    }
 
 
 # --- validation (FR-VAL) ----------------------------------------------------
@@ -385,6 +489,88 @@ def execute(body: dict = Body(...), x_engine_token: str | None = Header(default=
 
     threading.Thread(target=_run, name=f"exec-{run_id}", daemon=True).start()
     return {"runId": run_id, "status": "running", "eventsUrl": f"/internal/v1/runs/{run_id}/events"}
+
+
+# --- UI scanner (FR-UIS-001..010) ------------------------------------------
+
+
+@app.post("/internal/v1/ui-scans")
+def start_ui_scan(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
+    """Start a UI scan; events stream on the run event bus (§3, §24).
+
+    The backend owns the scan record and its id; the engine owns the browser.
+    Credentials and storage state arrive per request, are used once and are
+    never written to disk or echoed back (§16).
+    """
+    _auth(x_engine_token)
+    scan_id = str(body.get("scanId") or "").strip()
+    if not scan_id:
+        raise HTTPException(status_code=400, detail="scanId is required")
+    try:
+        options = ui_scan.build_options(body)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not options.url:
+        raise HTTPException(status_code=400, detail="url is required")
+    try:
+        return {"schema_version": SCHEMA_VERSION, **ui_scan.start_scan(scan_id, options)}
+    except ui_scan.ScanCapacityError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from None
+
+
+@app.post("/internal/v1/ui-scans/validate-locators")
+def validate_ui_locators(
+    body: dict = Body(...), x_engine_token: str | None = Header(default=None)
+) -> dict:
+    """Re-validate stored locators against the live page (§11 "Test locator").
+
+    Synchronous and short-lived: it opens a page, probes each locator and
+    closes the browser. Used by "Test locator", "Revalidate" and the
+    self-healing check — the verdict always comes from the application.
+    """
+    _auth(x_engine_token)
+    try:
+        options = ui_scan.build_options(body)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    if not options.url:
+        raise HTTPException(status_code=400, detail="url is required")
+    locators = body.get("locators") or []
+    if not isinstance(locators, list) or not locators:
+        raise HTTPException(status_code=400, detail="locators must be a non-empty list")
+    if len(locators) > 50:
+        raise HTTPException(status_code=400, detail="at most 50 locators per request")
+    try:
+        results = revalidate_locators(options, locators)
+    except UiScanError as exc:
+        raise HTTPException(status_code=422, detail=exc.to_dict()) from None
+    return {"schema_version": SCHEMA_VERSION, "results": results}
+
+
+@app.post("/internal/v1/ui-scans/{scan_id}/cancel")
+def cancel_ui_scan(scan_id: str, x_engine_token: str | None = Header(default=None)) -> dict:
+    _auth(x_engine_token)
+    return {"scanId": scan_id, "cancelled": ui_scan.cancel_scan(scan_id)}
+
+
+@app.get("/internal/v1/ui-scans/{scan_id}/result")
+def get_ui_scan_result(
+    scan_id: str,
+    x_engine_token: str | None = Header(default=None),
+    consume: bool = True,
+) -> dict:
+    """Collect a finished scan's result (elements, locators, artefacts).
+
+    Delivered over HTTP rather than the event stream because a full-page
+    screenshot and an ARIA snapshot have no business inside an SSE frame.
+    """
+    _auth(x_engine_token)
+    result = ui_scan.take_result(scan_id) if consume else ui_scan.peek_result(scan_id)
+    if result is None:
+        if ui_scan.is_running(scan_id):
+            raise HTTPException(status_code=409, detail=f"scan {scan_id} is still running")
+        raise HTTPException(status_code=404, detail=f"no result retained for scan {scan_id}")
+    return {"schema_version": SCHEMA_VERSION, **result}
 
 
 @app.post("/internal/v1/executions/{run_id}/cancel")
