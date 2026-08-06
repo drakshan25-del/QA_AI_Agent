@@ -1,8 +1,0 @@
-# Engine service dependencies (reuses the repo root packages + adds the API layer).
-# Install into the shared .venv: .venv/bin/pip install -r engine/requirements.txt
--r ../requirements.txt
-openpyxl>=3.1
-# V3 execution extras (FR-V3-EXE-011): per-test retries and parallel workers.
-# The runner degrades gracefully when these are absent.
-pytest-rerunfailures>=14.0
-pytest-xdist>=3.5

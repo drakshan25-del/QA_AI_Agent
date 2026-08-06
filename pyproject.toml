@@ -15,7 +15,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.2",
     "SQLAlchemy>=2.0",
-    "langchain>=1.0",
+    "langchain-core>=1.0",
     "langchain-ollama>=1.0",
     "langgraph>=1.0",
     "playwright>=1.45",
@@ -26,8 +26,35 @@ dependencies = [
     "python-multipart>=0.0.9",
     "Jinja2>=3.1",
     "httpx>=0.27",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+# V3 execution extras (FR-V3-EXE-011): per-test retries and parallel workers.
+# The engine runner degrades gracefully when these are absent.
+execution = [
+    "pytest-rerunfailures>=14.0",
+    "pytest-xdist>=3.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-html>=4.0",
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "agents*", "graph*", "tools*"]
-exclude = ["tests*", "automation*", "sample_app*"]
+include = ["app*", "agents*", "graph*", "tools*", "engine*", "automation*", "sample_app*"]
+exclude = ["tests*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "automation/tests", "automation/generated_tests"]
+markers = [
+    "unit: fast tests with no external services",
+    "integration: tests requiring Ollama, GitHub or a browser",
+    "e2e: full workflow tests",
+    "generated: AI-generated Playwright tests",
+    "smoke: minimal happy-path suite for CI gates",
+]
+addopts = "-ra"
+junit_family = "xunit2"

@@ -1,0 +1,19 @@
+# Build context for engine/Dockerfile (context: repo root).
+.git
+.venv*
+**/__pycache__
+**/*.pyc
+.pytest_cache
+*.egg-info
+artifacts/
+reports/
+backend/
+frontend/
+docs/
+tests/
+scripts/
+*.db
+*.sqlite
+.env
+.env.*
+.DS_Store

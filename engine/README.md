@@ -7,9 +7,9 @@ Node.js backend calls (FR-ENG-001..005). It wraps the V1 logic (`agents/`,
 ## Run
 
 ```bash
-# from the repo root, using the shared venv
-.venv/bin/pip install -r engine/requirements.txt
-ENGINE_TOKEN=dev-engine-token .venv/bin/python -m uvicorn engine.service.main:app --port 8100
+# from the repo root — uv creates/updates the shared .venv from uv.lock
+uv sync --all-extras
+ENGINE_TOKEN=dev-engine-token uv run python -m uvicorn engine.service.main:app --port 8100
 ```
 
 Health: `GET http://localhost:8100/internal/v1/health` (no auth on health).

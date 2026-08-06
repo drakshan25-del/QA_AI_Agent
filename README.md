@@ -28,12 +28,17 @@ The V1 engine logic (`app/`, `agents/`, `graph/`, `tools/`, `automation/`, `samp
 
 ## Run (local dev, no Docker required)
 
-Prereqs: Node 22+/npm, Python 3.12+ venv, Ollama running (`ollama serve` + `ollama pull qwen2.5:latest`).
+Prereqs: Node 22+/npm, [uv](https://docs.astral.sh/uv/) (provisions the pinned Python and `.venv` automatically), Ollama running (`ollama serve` + `ollama pull qwen2.5:latest`).
+
+Python dependencies are declared in `pyproject.toml` and locked in `uv.lock`;
+`uv sync` creates/updates the shared `.venv` at the repo root.
 
 ```bash
+# 0. One-time: sync the Python environment (creates .venv, Python 3.12)
+uv sync --all-extras
+
 # 1. Engine (:8100)
-.venv/bin/pip install -r engine/requirements.txt
-ENGINE_TOKEN=dev-engine-token .venv/bin/python -m uvicorn engine.service.main:app --port 8100
+ENGINE_TOKEN=dev-engine-token uv run python -m uvicorn engine.service.main:app --port 8100
 
 # 2. Backend (:4000) — SQLite dev fallback (no Postgres/Docker needed)
 cd backend && npm install && \
@@ -60,7 +65,7 @@ Open http://localhost:5173, sign in with the seeded admin, create a project, upl
 
 ```bash
 # Python engine + V1 logic (162 tests)
-.venv/bin/python -m pytest tests/unit -q
+uv run pytest tests/unit -q
 
 # Backend: build, unit tests, lint
 cd backend && npm run build && npm test && npm run lint
