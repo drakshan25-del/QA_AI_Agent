@@ -23,6 +23,7 @@ from tools.code_validation import (
     REPO_ROOT,
     check_collection,
     check_domains,
+    check_fixture_contract,
     check_forbidden,
     check_locator_policy,
     check_secrets,
@@ -43,6 +44,7 @@ def _static_issues(path: str, content: str, allowed_domains: list[str]) -> list[
         issues.extend(check_forbidden(content, path))
         issues.extend(check_locator_policy(content, path))
         issues.extend(check_sleeps(content, path))
+        issues.extend(check_fixture_contract(content, path))
     return issues
 
 

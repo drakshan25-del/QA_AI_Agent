@@ -15,6 +15,7 @@ Checks:
     check_domains         FR-VAL-004  URL allow-list enforcement.
     check_locator_policy  FR-AUT-003  brittle locators (warnings).
     check_sleeps          FR-AUT-004  fixed waits are forbidden.
+    check_fixture_contract FR-AUT-005 conftest fixture attributes that exist.
 """
 
 from __future__ import annotations
@@ -203,6 +204,20 @@ def _write_path_allowed(raw: str) -> bool:
     return p.split("/", 1)[0] in _ALLOWED_WRITE_ROOTS
 
 
+def _is_str_method_call(node: ast.Call) -> bool:
+    """True for a ``.replace(old, new)`` that can only be the ``str`` method.
+
+    ``replace`` is matched on the bare attribute name so that receivers the
+    resolver cannot name (``Path(p).replace(q)``) are still caught. That also
+    swept up ``str.replace``, which generated tests use constantly to derive
+    negative-case data — rejecting valid suites. The arity separates them
+    soundly: ``Path.replace``/``os.replace`` take a single target, while
+    ``str.replace`` requires both ``old`` and ``new``, so a call with two or
+    more positional arguments cannot be the filesystem operation.
+    """
+    return node.func.attr == "replace" and len(node.args) >= 2 and not node.keywords
+
+
 class _ForbiddenVisitor(ast.NodeVisitor):
     """AST walker collecting forbidden imports and calls (FR-VAL-003)."""
 
@@ -259,7 +274,11 @@ class _ForbiddenVisitor(ast.NodeVisitor):
             self._add(f"call into forbidden module '{name.split('.')[0]}'", node)
         elif name in {"open", "io.open"}:
             self._check_open(node)
-        elif isinstance(node.func, ast.Attribute) and node.func.attr in _FORBIDDEN_METHODS:
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _FORBIDDEN_METHODS
+            and not _is_str_method_call(node)
+        ):
             # Catches receivers the resolver cannot name, e.g. Path(...).write_text.
             self._add(_FORBIDDEN_METHODS[node.func.attr], node)
         elif isinstance(node.func, ast.Attribute) and node.func.attr == "open" and not name:
@@ -533,6 +552,59 @@ def check_sleeps(code: str, filename: str) -> list[ValidationIssue]:
         auto-waiting and ``expect`` assertions instead of hard sleeps.
     """
     return _scan_lines(code, _SLEEP_PATTERNS, "sleeps", "error", filename)
+
+
+# ---------------------------------------------------------------------------
+# FR-AUT-005: conftest fixture contract
+# ---------------------------------------------------------------------------
+
+#: Attributes the ``credentials`` fixture actually exposes (the ``Credentials``
+#: NamedTuple in ``automation/conftest.py``). Generated tests readily invent a
+#: plausible-sounding field such as ``.email`` when the scenario is phrased in
+#: terms of an email address; the module still imports and collects cleanly, so
+#: the gate passes and the run only dies mid-test with an ``AttributeError``
+#: after a browser has been launched.
+_CREDENTIALS_ATTRS = frozenset({"username", "password"})
+
+
+def check_fixture_contract(code: str, filename: str) -> list[ValidationIssue]:
+    """Flag attributes the ``credentials`` fixture does not expose (FR-AUT-005).
+
+    ``pytest --collect-only`` (FR-VAL-002) imports a generated module but never
+    executes its test bodies, so an attribute that does not exist is invisible
+    to every other check in this module. This closes that gap statically.
+
+    Returns:
+        Error-severity issues; each names the offending attribute and the
+        fixture fields that do exist.
+    """
+    try:
+        tree = ast.parse(code, filename=filename)
+    except SyntaxError:
+        return []  # already reported by check_syntax
+
+    valid = ", ".join(f".{a}" for a in sorted(_CREDENTIALS_ATTRS))
+    issues: list[ValidationIssue] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or node.attr in _CREDENTIALS_ATTRS:
+            continue
+        target = node.value
+        if not isinstance(target, ast.Name) or target.id != "credentials":
+            continue
+        if node.attr.startswith("_"):
+            continue  # NamedTuple internals (_replace, _asdict) are legitimate
+        issues.append(
+            ValidationIssue(
+                check="fixtures",
+                severity="error",
+                message=(
+                    f"the credentials fixture has no attribute '{node.attr}'; "
+                    f"it exposes {valid} only (automation/conftest.py, FR-AUT-005)"
+                ),
+                location=f"{filename}:{node.lineno}",
+            )
+        )
+    return issues
 
 
 # ---------------------------------------------------------------------------

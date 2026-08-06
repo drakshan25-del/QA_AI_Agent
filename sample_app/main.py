@@ -35,7 +35,7 @@ import secrets
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-app = FastAPI(title="QA Demo Target App", docs_url=None, redoc_url=None)
+app = FastAPI(title="QA Demo Target App", redoc_url=None)
 
 SESSION_COOKIE = "session"
 

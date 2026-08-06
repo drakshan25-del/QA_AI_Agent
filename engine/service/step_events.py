@@ -31,6 +31,19 @@ _T0 = {"t": time.time()}
 
 _SECRET_HINTS = ("password", "passwd", "secret", "token", "credential", "pwd")
 
+#: Action types whose ``value`` carries diagnostic text (a failure reason)
+#: rather than user input, so it is summarised instead of dropped.
+_DIAGNOSTIC_ACTIONS = ("test", "error")
+
+#: Chromium's error text for a request the SEC-003 domain allow-list guard
+#: aborted (``route.abort("blockedbyclient")`` in ``automation/conftest.py``).
+#: Those aborts are the guard working as designed — every third-party font,
+#: analytics and CDN request on an external target produces one — so they are
+#: reported as ``blocked``, never ``failed``. Emitting them as failures floods
+#: the live log with ERROR lines and, worse, overwrites the real per-test
+#: failure reason with an unrelated asset URL.
+_GUARD_BLOCKED = "ERR_BLOCKED_BY_CLIENT"
+
 # Events are shipped by a daemon sender thread so emit_step never blocks the
 # Playwright dispatch path (a page spamming console errors must not slow the
 # run). The queue is bounded; under backpressure the oldest telemetry is
@@ -57,7 +70,14 @@ def _ensure_sender() -> None:
 
 
 def _redact(action_type: str, target: str, value: str) -> str:
-    """Redact fill values on sensitive fields (SEC-007, FR-EXE-008)."""
+    """Redact fill values on sensitive fields (SEC-007, FR-EXE-008).
+
+    Diagnostic actions carry a failure reason rather than user input, so their
+    value is kept (truncated) — that reason is what the live log shows when a
+    test fails. The backend redacts log text again before persisting it.
+    """
+    if action_type in _DIAGNOSTIC_ACTIONS:
+        return (value or "")[:200]
     if action_type != "fill":
         return ""
     low = f"{target}".lower()
@@ -150,14 +170,48 @@ def pytest_runtest_logstart(nodeid, location):  # noqa: D401
     emit_step("test", target=nodeid, status="running", test_name=nodeid)
 
 
+def _crash_reason(report) -> str:
+    """One-line reason a test failed, taken from pytest's own crash repr.
+
+    This is the authoritative failure cause (e.g. ``AttributeError: ...``,
+    ``TimeoutError: Locator.click: ...``). Without it the backend can only
+    guess from whatever error the page happened to emit last, which is why
+    real assertion failures used to be reported as unrelated console noise.
+    """
+    longrepr = getattr(report, "longrepr", None)
+    message = getattr(getattr(longrepr, "reprcrash", None), "message", "") or ""
+    if not message:
+        message = str(longrepr or "")
+    lines = [ln.strip() for ln in message.splitlines() if ln.strip()]
+    return lines[0][:200] if lines else ""
+
+
 def pytest_runtest_logreport(report):  # noqa: D401
     if report.when != "call" and not (report.when == "setup" and report.skipped):
         return
     status = "passed" if report.passed else "skipped" if report.skipped else "failed"
-    emit_step("test", target=report.nodeid, status=status, test_name=report.nodeid)
+    emit_step(
+        "test",
+        target=report.nodeid,
+        value=_crash_reason(report) if status == "failed" else "",
+        status=status,
+        test_name=report.nodeid,
+    )
 
 
 # --- autouse fixture: attach page listeners for navigation/errors ----------
+
+
+def _emit_request_failed(request, node: str) -> None:
+    """Emit a failed network request, distinguishing guard aborts from defects."""
+    failure = str(getattr(request, "failure", "") or "")
+    emit_step(
+        "error",
+        target=f"network: {request.url[:120]}",
+        value=failure[:80],
+        status="blocked" if _GUARD_BLOCKED in failure else "failed",
+        test_name=node,
+    )
 
 try:
     import pytest
@@ -184,25 +238,22 @@ try:
                                       test_name=node),
             )
             # Console errors and failed network requests are part of the
-            # captured evidence (FR-V3-EXE-010).
+            # captured evidence (FR-V3-EXE-010). Both are still emitted when
+            # the allow-list guard caused them, but as ``blocked`` rather than
+            # ``failed`` — kept in the timeline, kept out of the failure log.
             page.on(
                 "console",
                 lambda msg: (
-                    emit_step("error", target=f"console: {msg.text[:150]}",
-                              status="failed", test_name=node)
+                    emit_step(
+                        "error",
+                        target=f"console: {msg.text[:150]}",
+                        status="blocked" if _GUARD_BLOCKED in msg.text else "failed",
+                        test_name=node,
+                    )
                     if msg.type == "error" else None
                 ),
             )
-            page.on(
-                "requestfailed",
-                lambda request: emit_step(
-                    "error",
-                    target=f"network: {request.url[:120]}",
-                    value=str(getattr(request, "failure", "") or "")[:80],
-                    status="failed",
-                    test_name=node,
-                ),
-            )
+            page.on("requestfailed", lambda req: _emit_request_failed(req, node))
         yield
 except Exception:  # pragma: no cover - pytest always present in engine runtime
     pass

@@ -1,31 +1,42 @@
-from playwright.sync_api import Locator, Page
+"""Page object for the demo target app's login page (FR-AUT-001, FR-AUT-003).
+
+Contract with the sample app (built by a separate module):
+``/login`` serves a form with ``data-testid`` inputs ``username`` and
+``password``, a submit button with role ``button`` and accessible name
+``Log in``, and a flash message element ``[data-testid=flash]``.
+"""
+
+from __future__ import annotations
+
+from playwright.sync_api import Locator, Page, expect
 
 from automation.pages.base_page import BasePage
 
 
 class SampleLoginPage(BasePage):
-    """Page object for https://practicetestautomation.com/practice-test-login/.
+    """Login page of the sample application under test."""
 
-    The project ``base_url`` is already the full login-page URL, so navigation
-    goes straight to it — no extra path is appended.
-    """
+    path = "/login"
 
     def __init__(self, page: Page, base_url: str) -> None:
         super().__init__(page, base_url)
-        self.username_field: Locator = page.locator("#username")
-        self.password_field: Locator = page.locator("#password")
-        self.submit_button: Locator = page.locator("#submit")
-        self.error_message: Locator = page.locator("#error")
-        self.success_heading: Locator = page.get_by_role(
-            "heading", name="Logged In Successfully"
-        )
-
-    def open(self) -> None:
-        """Navigate directly to the login page (base_url), no path appended."""
-        self.page.goto(self.base_url)
+        self.username_input: Locator = self.by_test_id("username")
+        self.password_input: Locator = self.by_test_id("password")
+        self.submit_button: Locator = self.by_role("button", name="Log in")
+        self.flash: Locator = self.by_test_id("flash")
 
     def login(self, username: str, password: str) -> None:
-        self.open()
-        self.fill(self.username_field, username, label="Username")
-        self.fill(self.password_field, password, label="Password")
-        self.click(self.submit_button, label="Submit")
+        """Fill the credentials and submit the form.
+
+        Credentials must come from the ``credentials`` fixture, never from
+        literals in test code (FR-AUT-005). Interactions go through the
+        instrumented BasePage helpers so the live timeline shows each
+        fill/click (FR-EXE-007); the password value is redacted (SEC-007).
+        """
+        self.fill(self.username_input, username, "Username")
+        self.fill(self.password_input, password, "Password")
+        self.click(self.submit_button, "Log in")
+
+    def assert_flash_contains(self, text: str) -> None:
+        """Web-first assertion on the flash message text (FR-AUT-004)."""
+        expect(self.flash).to_contain_text(text)
