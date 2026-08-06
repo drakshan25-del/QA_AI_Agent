@@ -1,0 +1,5 @@
+# Test run output (anchored to the qa-engine package root)
+artifacts/*
+!artifacts/.gitkeep
+reports/*
+!reports/.gitkeep

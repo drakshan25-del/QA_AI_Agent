@@ -101,7 +101,10 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
 
   /** Delete run evidence directories older than the cutoff. */
   private async sweepEvidence(cutoff: Date): Promise<number> {
-    const artifactsDir = join(process.cwd(), '..', 'artifacts');
+    // ARTIFACTS_DIR is set in Docker (shared volume with the engine); the
+    // fallback resolves apps/qa-engine/artifacts when run from apps/backend.
+    const artifactsDir =
+      process.env.ARTIFACTS_DIR ?? join(process.cwd(), '..', 'qa-engine', 'artifacts');
     let removed = 0;
     try {
       const entries = await fs.readdir(artifactsDir, { withFileTypes: true });

@@ -1,4 +1,4 @@
-# QA_AI_Agents engine (Python + Playwright). Built from the repo root context.
+# QA_AI_Agents engine (Python + Playwright). Built from the apps/qa-engine context.
 FROM mcr.microsoft.com/playwright/python:v1.61.0-jammy
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

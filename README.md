@@ -17,44 +17,45 @@ React (Vite, :5173)  ──REST /api/v2/* + WS /api/v2/events──▶  NestJS b
 
 | Tier | Tech | Responsibility |
 |---|---|---|
-| **Frontend** (`frontend/`) | React 18 + Vite + TypeScript | Upload, source preview, plan/case review, code viewer + diff, approvals, **live execution timeline**, reports, audit (FR-FE-*) |
-| **Backend** (`backend/`) | NestJS + TypeORM | Auth/roles, projects, documents, approvals, jobs, executions, GitHub/CI, WebSocket events, audit — the system of record (FR-BE-*) |
-| **Engine** (`engine/`) | Python FastAPI wrapping V1 logic | Parse docs, LangGraph/create_agent/ChatOllama generation, validation, Playwright execution with step events, classification, reporting (FR-ENG-*) |
+| **Frontend** (`apps/frontend/`) | React 18 + Vite + TypeScript | Upload, source preview, plan/case review, code viewer + diff, approvals, **live execution timeline**, reports, audit (FR-FE-*) |
+| **Backend** (`apps/backend/`) | NestJS + TypeORM | Auth/roles, projects, documents, approvals, jobs, executions, GitHub/CI, WebSocket events, audit — the system of record (FR-BE-*) |
+| **Engine** (`apps/qa-engine/`) | Python FastAPI wrapping V1 logic | Parse docs, LangGraph/create_agent/ChatOllama generation, validation, Playwright execution with step events, classification, reporting (FR-ENG-*) |
 | **Database** | PostgreSQL (SQLite dev fallback) | Projects, documents/segments, artefacts, approvals, runs, events, audit (§10.1) |
 | **Real-time** | WebSocket/SSE | Step-by-step execution events to the browser (FR-EXE-006..008) |
 | **CI/CD** | GitHub Actions | Validate + run committed tests; no Ollama in CI (§12.3) |
 
-The V1 engine logic (`app/`, `agents/`, `graph/`, `tools/`, `automation/`, `sample_app/`) is **preserved and reused** by the engine tier. The integration contract every tier is built against is [`docs/V2_CONTRACT.md`](docs/V2_CONTRACT.md).
+The V1 engine logic (`app/`, `agents/`, `graph/`, `tools/`, `automation/`, `sample_app/` — all under `apps/qa-engine/`) is **preserved and reused** by the engine tier. The integration contract every tier is built against is [`docs/V2_CONTRACT.md`](docs/V2_CONTRACT.md).
 
 ## Run (local dev, no Docker required)
 
 Prereqs: Node 22+/npm, [uv](https://docs.astral.sh/uv/) (provisions the pinned Python and `.venv` automatically), Ollama running (`ollama serve` + `ollama pull qwen2.5:latest`).
 
-Python dependencies are declared in `pyproject.toml` and locked in `uv.lock`;
-`uv sync` creates/updates the shared `.venv` at the repo root.
+Python dependencies are declared in `apps/qa-engine/pyproject.toml` and locked
+in `apps/qa-engine/uv.lock`; `uv sync` creates/updates the shared `.venv` at
+`apps/qa-engine/.venv`.
 
 ```bash
 # 0. One-time: sync the Python environment (creates .venv, Python 3.12)
-uv sync --all-extras
+cd apps/qa-engine && uv sync --all-extras
 
-# 1. Engine (:8100)
+# 1. Engine (:8100) — from apps/qa-engine
 ENGINE_TOKEN=dev-engine-token uv run python -m uvicorn engine.service.main:app --port 8100
 
 # 2. Backend (:4000) — SQLite dev fallback (no Postgres/Docker needed)
-cd backend && npm install && \
+cd apps/backend && npm install && \
   DB_DRIVER=sqlite JWT_ACCESS_SECRET=dev JWT_REFRESH_SECRET=dev \
   ENGINE_URL=http://localhost:8100 ENGINE_TOKEN=dev-engine-token \
   SEED_ADMIN_EMAIL=admin@example.com SEED_ADMIN_PASSWORD=admin12345 npm run start
 
 # 3. Frontend (:5173)
-cd frontend && npm install && npm run dev
+cd apps/frontend && npm install && npm run dev
 ```
 
 ## Run (docker-compose, PostgreSQL)
 
 ```bash
 cp .env.v2.example .env      # set secrets
-docker compose up --build    # postgres + redis + engine + backend + frontend
+docker compose up --build    # postgres + engine + sample-app + backend + frontend
 ```
 
 ## Full stack (all tiers, per SRS §16)
@@ -65,13 +66,13 @@ Open http://localhost:5173, sign in with the seeded admin, create a project, upl
 
 ```bash
 # Python engine + V1 logic (162 tests)
-uv run pytest tests/unit -q
+cd apps/qa-engine && uv run pytest tests/unit -q
 
 # Backend: build, unit tests, lint
-cd backend && npm run build && npm test && npm run lint
+cd apps/backend && npm run build && npm test && npm run lint
 
 # Frontend: types, unit tests, lint, production build
-cd frontend && npm run typecheck && npm test && npm run lint && npm run build
+cd apps/frontend && npm run typecheck && npm test && npm run lint && npm run build
 ```
 
 ## CI (GitHub Actions, SRS §12)

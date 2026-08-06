@@ -14,10 +14,6 @@ __pycache__/
 *.sqlite3
 
 # Test run output
-artifacts/*
-!artifacts/.gitkeep
-reports/*
-!reports/.gitkeep
 test-results/
 playwright-report/
 

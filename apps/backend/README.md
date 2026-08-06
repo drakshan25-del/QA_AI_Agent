@@ -18,7 +18,7 @@ TypeORM 0.3, JWT auth, socket.io real-time events, and a typed engine client.
 ## Quick start
 
 ```bash
-cd backend
+cd apps/backend
 npm install                     # native better-sqlite3 builds here
 cp .env.example .env            # then edit secrets (SEC-002)
 

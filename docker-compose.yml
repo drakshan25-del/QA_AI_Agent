@@ -1,4 +1,4 @@
-# V2 three-tier stack (SRS §16, Appendix A). Local dev orchestration.
+# V3 stack (SRS §16, Appendix A). Local dev orchestration for the apps/ monorepo.
 # Ollama runs on the host (http://host.docker.internal:11434) so the engine
 # reuses the researcher's local models without shipping them into a container.
 services:
@@ -16,20 +16,21 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
-    image: redis:7
-    ports: ["6379:6379"]
-
   engine:
-    build: { context: ., dockerfile: engine/Dockerfile }
+    build: { context: ./apps/qa-engine, dockerfile: engine/Dockerfile }
+    image: qa-engine:local
     restart: unless-stopped
     environment:
       ENGINE_PORT: "8100"
       ENGINE_TOKEN: ${ENGINE_TOKEN:-dev-engine-token}
       QA_OLLAMA_BASE_URL: ${QA_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       QA_LLM_MODEL: ${QA_LLM_MODEL:-qwen2.5:latest}
+      # Docker executions default to the bundled demo target (sample-app service).
+      QA_TARGET_BASE_URL: ${QA_TARGET_BASE_URL:-http://sample-app:8001}
+      QA_ALLOWED_DOMAINS: ${QA_ALLOWED_DOMAINS:-localhost,127.0.0.1,sample-app}
     ports: ["8100:8100"]
     extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["artifacts:/app/artifacts"]
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/internal/v1/health', timeout=3).status==200 else 1)\""]
       interval: 10s
@@ -37,8 +38,23 @@ services:
       retries: 12
       start_period: 20s
 
+  # Demo target app for executions; reuses the engine image (identical build
+  # section + identical image tag, so Compose/BuildKit builds it only once).
+  sample-app:
+    build: { context: ./apps/qa-engine, dockerfile: engine/Dockerfile }
+    image: qa-engine:local
+    restart: unless-stopped
+    command: ["/app/.venv/bin/python", "-m", "uvicorn", "sample_app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["8001:8001"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   backend:
-    build: { context: ./backend }
+    build: { context: ./apps/backend }
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
@@ -54,7 +70,13 @@ services:
       CORS_ORIGIN: http://localhost:5173
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-admin}
+      UPLOAD_DIR: /app/evidence
+      # Shared volume with the engine so the evidence retention sweep works.
+      ARTIFACTS_DIR: /app/artifacts
     ports: ["4000:4000"]
+    volumes:
+      - "evidence:/app/evidence"
+      - "artifacts:/app/artifacts"
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/v2/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 10s
@@ -63,14 +85,18 @@ services:
       start_period: 15s
 
   frontend:
-    build: { context: ./frontend }
+    build:
+      context: ./apps/frontend
+      # Vite inlines these at build time; runtime environment would be inert.
+      args:
+        VITE_API_BASE: http://localhost:4000/api/v2
+        VITE_WS_BASE: ws://localhost:4000
     restart: unless-stopped
     depends_on:
       backend: { condition: service_healthy }
-    environment:
-      VITE_API_BASE: http://localhost:4000/api/v2
-      VITE_WS_BASE: ws://localhost:4000
-    ports: ["5173:5173"]
+    ports: ["5173:80"]
 
 volumes:
   pgdata:
+  artifacts:
+  evidence:

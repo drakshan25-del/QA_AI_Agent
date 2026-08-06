@@ -7,7 +7,7 @@ Node.js backend calls (FR-ENG-001..005). It wraps the V1 logic (`agents/`,
 ## Run
 
 ```bash
-# from the repo root — uv creates/updates the shared .venv from uv.lock
+# from apps/qa-engine — uv creates/updates the shared .venv from uv.lock
 uv sync --all-extras
 ENGINE_TOKEN=dev-engine-token uv run python -m uvicorn engine.service.main:app --port 8100
 ```
@@ -17,7 +17,7 @@ All other endpoints require header `X-Engine-Token: <ENGINE_TOKEN>`.
 
 ## Contract
 
-See [`docs/V2_CONTRACT.md`](../docs/V2_CONTRACT.md) §4. Endpoints:
+See [`docs/V2_CONTRACT.md`](../../../docs/V2_CONTRACT.md) §4. Endpoints:
 `/parse`, `/analyse`, `/test-plan`, `/test-cases`, `/automation`, `/validate`,
 `/execution-plan`, `/classify`, `/report`, `/execute` (+ `/runs/{id}/events`
 SSE), `/health`. Outputs are versioned Pydantic schemas (`engine/contracts/`).

@@ -27,6 +27,9 @@ jobs:
   playwright-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/qa-engine
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,6 +38,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-dependency-glob: "apps/qa-engine/uv.lock"
 
       # §12.2: reproducible dependency set — install from the committed uv.lock.
       # uv provisions the Python pinned in .python-version automatically.
@@ -84,6 +88,6 @@ jobs:
         with:
           name: test-results
           path: |
-            reports/
-            artifacts/
+            apps/qa-engine/reports/
+            apps/qa-engine/artifacts/
           if-no-files-found: warn

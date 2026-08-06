@@ -1,4 +1,4 @@
-# Build context for engine/Dockerfile (context: repo root).
+# Build context for engine/Dockerfile (context: apps/qa-engine).
 .git
 .venv*
 **/__pycache__
@@ -7,9 +7,6 @@
 *.egg-info
 artifacts/
 reports/
-backend/
-frontend/
-docs/
 tests/
 scripts/
 *.db

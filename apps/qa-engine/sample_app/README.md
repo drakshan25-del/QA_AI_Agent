@@ -9,6 +9,7 @@ No database — all state lives in memory and resets on restart.
 ## Run
 
 ```bash
+# from apps/qa-engine (where the uv-managed .venv lives)
 .venv/bin/python -m uvicorn sample_app.main:app --port 8001
 ```
 
