@@ -11,7 +11,7 @@ services:
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U qa"]
+      test: ["CMD-SHELL", "pg_isready -U qa -d qa_v2"]
       interval: 5s
       timeout: 3s
       retries: 10

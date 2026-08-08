@@ -187,7 +187,7 @@ export class ProjectsService {
     const results = await this.dataSource
       .getRepository(TestResult)
       .createQueryBuilder('r')
-      .innerJoin(ExecutionRun, 'e', 'e.id = r.execution_run_id')
+      .innerJoin(ExecutionRun, 'e', 'CAST(e.id AS varchar) = r.execution_run_id')
       .where('e.project_id = :id', { id })
       .getMany();
     const passed = results.filter((r) => r.outcome === 'passed').length;
@@ -359,7 +359,7 @@ export class ProjectsService {
     const results = await this.dataSource
       .getRepository(TestResult)
       .createQueryBuilder('r')
-      .innerJoin(ExecutionRun, 'e', 'e.id = r.execution_run_id')
+      .innerJoin(ExecutionRun, 'e', 'CAST(e.id AS varchar) = r.execution_run_id')
       .where('e.project_id = :id', { id })
       .getMany();
     const passed = results.filter((r) => r.outcome === 'passed').length;

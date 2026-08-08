@@ -269,29 +269,49 @@ export class EngineClient {
 
     const stream = res.data as Readable;
     let buffer = '';
+    // Handlers are chained so events are processed strictly in order and the
+    // method only returns after the last handler settles. A fire-and-forget
+    // dispatch here let the caller's finalize() run while the terminal
+    // status event (which carries the run metrics) was still being applied,
+    // so fully green runs could be reported as failed with empty metrics.
+    let chain: Promise<void> = Promise.resolve();
 
-    await new Promise<void>((resolve, reject) => {
-      const onData = (chunk: Buffer) => {
-        buffer += chunk.toString('utf8');
-        let idx: number;
-        // SSE frames are separated by a blank line.
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const parsed = parseSseFrame(frame);
-          if (parsed) void onEvent(parsed);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onData = (chunk: Buffer) => {
+          buffer += chunk.toString('utf8');
+          let idx: number;
+          // SSE frames are separated by a blank line.
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const parsed = parseSseFrame(frame);
+            if (parsed) {
+              chain = chain
+                .then(() => onEvent(parsed))
+                .catch((err: Error) => {
+                  this.logger.warn(
+                    `run ${runId} event handler failed (seq ${parsed.seq}): ${err.message}`,
+                  );
+                });
+            }
+          }
+        };
+        stream.on('data', onData);
+        stream.on('end', () => resolve());
+        stream.on('error', (e: Error) => reject(e));
+        if (opts.signal) {
+          opts.signal.addEventListener('abort', () => {
+            stream.destroy();
+            resolve();
+          });
         }
-      };
-      stream.on('data', onData);
-      stream.on('end', () => resolve());
-      stream.on('error', (e: Error) => reject(e));
-      if (opts.signal) {
-        opts.signal.addEventListener('abort', () => {
-          stream.destroy();
-          resolve();
-        });
-      }
-    });
+      });
+    } finally {
+      // Drain in-flight handlers before returning (every link is caught
+      // above, so this await can never throw and mask a stream error).
+      await chain;
+    }
   }
 }
 

@@ -44,6 +44,15 @@ _DIAGNOSTIC_ACTIONS = ("test", "error")
 #: failure reason with an unrelated asset URL.
 _GUARD_BLOCKED = "ERR_BLOCKED_BY_CLIENT"
 
+#: Chromium prefixes every console message about an asset that did not load
+#: with this text (e.g. "Failed to load resource: the server responded with a
+#: status of 409"). Those messages are page-side resource noise (trackers,
+#: beacons, HTTP errors on assets), never a test defect — the authoritative
+#: failure reason comes from pytest's crash repr. They are emitted as
+#: ``warning`` so they stay in the event timeline as evidence without
+#: producing ERROR log lines or displacing the real failure reason.
+_RESOURCE_NOISE = "Failed to load resource"
+
 # Events are shipped by a daemon sender thread so emit_step never blocks the
 # Playwright dispatch path (a page spamming console errors must not slow the
 # run). The queue is bounded; under backpressure the oldest telemetry is
@@ -247,7 +256,11 @@ try:
                     emit_step(
                         "error",
                         target=f"console: {msg.text[:150]}",
-                        status="blocked" if _GUARD_BLOCKED in msg.text else "failed",
+                        status=(
+                            "blocked" if _GUARD_BLOCKED in msg.text
+                            else "warning" if msg.text.startswith(_RESOURCE_NOISE)
+                            else "failed"
+                        ),
                         test_name=node,
                     )
                     if msg.type == "error" else None

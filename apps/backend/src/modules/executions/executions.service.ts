@@ -834,22 +834,16 @@ export class ExecutionsService {
     // Runtime errors surfaced by page listeners (pageerror/console/network) or
     // a failing action — record the reason and stream it as an ERROR line.
     // `blocked` marks a request the domain allow-list guard aborted by design
-    // (SEC-003): kept in the timeline as evidence, logged at debug so it never
-    // masquerades as a defect or displaces the real failure reason.
-    if (status === 'failed' || status === 'blocked') {
+    // (SEC-003): it stays in the persisted event timeline as evidence but is
+    // never written to the human log — on an external target every
+    // third-party font/analytics request produces one, drowning real errors.
+    if (status === 'failed') {
       const target = String(payload.target || '');
       const value = String(payload.value_summary || '');
       const detail = [target, value].filter(Boolean).join(' — ');
       if (detail) {
-        if (status === 'blocked') {
-          await log.debug(`blocked by domain allow-list: ${detail}`, {
-            testCaseId,
-            testName: name,
-          });
-        } else {
-          if (state && testCaseId) state.lastError.set(testCaseId, target || detail);
-          await log.error(detail, { testCaseId, testName: name });
-        }
+        if (state && testCaseId) state.lastError.set(testCaseId, target || detail);
+        await log.error(detail, { testCaseId, testName: name });
       }
     }
   }
