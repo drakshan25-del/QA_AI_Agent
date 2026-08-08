@@ -3,3 +3,5 @@ artifacts/*
 !artifacts/.gitkeep
 reports/*
 !reports/.gitkeep
+finetune/work/
+finetune/data/

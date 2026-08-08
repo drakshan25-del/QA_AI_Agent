@@ -1,0 +1,26 @@
+# QLoRA fine-tune: qwen2.5 planner (test plan + test case generation).
+# Run from apps/qa-engine:  uv run mlx_lm.lora -c finetune/configs/planner.yaml
+model: mlx-community/Qwen2.5-7B-Instruct-4bit
+train: true
+fine_tune_type: lora
+data: finetune/data/planner
+adapter_path: finetune/work/planner/adapters
+
+# 54 train examples, batch 1 → 54 iters/epoch; 5 epochs.
+batch_size: 1
+iters: 270
+max_seq_length: 5120
+grad_checkpoint: true
+mask_prompt: true          # learn the JSON output, not the prompt
+learning_rate: 5.0e-5
+num_layers: 16
+lora_parameters:
+  rank: 16
+  dropout: 0.05
+  scale: 20.0
+
+steps_per_report: 10
+steps_per_eval: 54         # validate once per epoch
+val_batches: -1            # full validation set
+save_every: 54
+seed: 20260808

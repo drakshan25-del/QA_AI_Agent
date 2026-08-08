@@ -1,0 +1,26 @@
+# QLoRA fine-tune: qwen2.5-coder (Playwright automation generation).
+# Run from apps/qa-engine:  uv run mlx_lm.lora -c finetune/configs/coder.yaml
+model: mlx-community/Qwen2.5-Coder-7B-Instruct-4bit
+train: true
+fine_tune_type: lora
+data: finetune/data/coder
+adapter_path: finetune/work/coder/adapters
+
+# 43 train examples, batch 1 → 43 iters/epoch; 5 epochs.
+batch_size: 1
+iters: 215
+max_seq_length: 6144
+grad_checkpoint: true
+mask_prompt: true
+learning_rate: 5.0e-5
+num_layers: 16
+lora_parameters:
+  rank: 16
+  dropout: 0.05
+  scale: 20.0
+
+steps_per_report: 10
+steps_per_eval: 43
+val_batches: -1
+save_every: 43
+seed: 20260808

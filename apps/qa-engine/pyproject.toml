@@ -41,6 +41,14 @@ execution = [
 dev = [
     "pytest-html>=4.0",
 ]
+# Local fine-tuning pipeline (finetune/): MLX LoRA training on Apple silicon
+# plus the llama.cpp GGUF conversion toolchain. Never needed at runtime.
+finetune = [
+    "mlx-lm>=0.21",
+    "torch>=2.4",
+    "gguf>=0.10",
+    "sentencepiece>=0.2",
+]
 
 [tool.setuptools.packages.find]
 include = ["app*", "agents*", "graph*", "tools*", "engine*", "automation*", "sample_app*"]

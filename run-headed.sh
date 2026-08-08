@@ -26,6 +26,9 @@ FRONTEND_DIR="$ROOT/apps/frontend"
 : "${SEED_ADMIN_PASSWORD:=change-me-admin}"
 : "${QA_OLLAMA_BASE_URL:=http://localhost:11434}"
 : "${QA_LLM_MODEL:=qwen2.5:latest}"
+# Dedicated code model for automation generation (falls back to the project
+# model while the fine-tuned model has not been created in Ollama yet).
+: "${QA_LLM_CODER_MODEL:=qwen2.5-coder-qa:7b}"
 : "${QA_TARGET_BASE_URL:=http://localhost:8001}"
 : "${QA_ALLOWED_DOMAINS:=localhost,127.0.0.1}"
 
@@ -99,6 +102,7 @@ say "starting engine on :8100 (host — headed executions open real Chrome)…"
 ( cd "$ENGINE_DIR" && PYTHONUNBUFFERED=1 \
     ENGINE_TOKEN="$ENGINE_TOKEN" ENGINE_PORT=8100 \
     QA_OLLAMA_BASE_URL="$QA_OLLAMA_BASE_URL" QA_LLM_MODEL="$QA_LLM_MODEL" \
+    QA_LLM_CODER_MODEL="$QA_LLM_CODER_MODEL" \
     QA_TARGET_BASE_URL="$QA_TARGET_BASE_URL" QA_ALLOWED_DOMAINS="$QA_ALLOWED_DOMAINS" \
     uv run python -m uvicorn engine.service.main:app --port 8100 2>&1 | logpipe "engine    " ) &
 wait_http "engine" "http://localhost:8100/internal/v1/health"

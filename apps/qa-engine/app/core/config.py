@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Local LLM (Ollama)
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "qwen2.5:latest"
+    # Optional dedicated code model for the Automation Agent (QA_LLM_CODER_MODEL).
+    # When set and available in Ollama, automation generation uses it instead of
+    # the per-project model; empty keeps the single-model behaviour.
+    llm_coder_model: str = ""
     llm_temperature: float = 0.1
     llm_timeout_seconds: int = 300
     llm_max_retries: int = 2

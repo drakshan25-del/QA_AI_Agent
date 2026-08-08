@@ -231,7 +231,8 @@ def automation(body: dict = Body(...), x_engine_token: str | None = Header(defau
         return AutomationOutput.model_validate(cached)
     try:
         out = automation_agent.generate_automation(
-            body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""))
+            body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""),
+            model=body.get("model"), temperature=body.get("temperature"))
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())

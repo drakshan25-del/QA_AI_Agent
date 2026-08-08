@@ -25,6 +25,9 @@ services:
       ENGINE_TOKEN: ${ENGINE_TOKEN:-dev-engine-token}
       QA_OLLAMA_BASE_URL: ${QA_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       QA_LLM_MODEL: ${QA_LLM_MODEL:-qwen2.5:latest}
+      # Dedicated code model for automation generation; falls back to the
+      # project model when this model is not present in Ollama.
+      QA_LLM_CODER_MODEL: ${QA_LLM_CODER_MODEL:-qwen2.5-coder-qa:7b}
       # Docker executions default to the bundled demo target (sample-app service).
       QA_TARGET_BASE_URL: ${QA_TARGET_BASE_URL:-http://sample-app:8001}
       QA_ALLOWED_DOMAINS: ${QA_ALLOWED_DOMAINS:-localhost,127.0.0.1,sample-app}
