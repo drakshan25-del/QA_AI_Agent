@@ -15,6 +15,11 @@ Fixtures exposed to every test under ``automation/``:
 * ``target_available`` — pings ``base_url`` once per session (httpx, 2 s
   timeout) and skips requesting tests when the target app is not running, so
   suites stay green without services.
+* ``api_client`` — an ``httpx.Client`` preconfigured with ``base_url`` for
+  generated API tests (no browser). Every outbound request — including
+  redirect hops — is checked against ``QA_ALLOWED_DOMAINS`` and refused when
+  the host is not allow-listed, mirroring the browser-route guard so
+  non-browser tests get the same SEC-003 enforcement.
 * ``_domain_allowlist_guard`` (autouse) — runtime enforcement of the domain
   allow-list (SEC-003, complements the static FR-VAL-004 check): every
   browser test's Playwright context gets a route that aborts requests whose
@@ -29,7 +34,7 @@ automation tree remains standalone in CI.
 from __future__ import annotations
 
 import os
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 from urllib.parse import urlparse
 
 import httpx
@@ -127,6 +132,45 @@ def credentials() -> Credentials:
         username=os.environ.get("QA_TEST_USERNAME", "demo@example.com"),
         password=os.environ.get("QA_TEST_PASSWORD", "change-me"),
     )
+
+
+def _api_request_guard(domains: list[str]):
+    """Build an httpx request hook enforcing the domain allow-list (SEC-003).
+
+    Pure factory so the guard is unit-testable; the returned hook refuses any
+    request whose host is not allow-listed, before it leaves the process.
+    """
+
+    def _enforce(request: httpx.Request) -> None:
+        if not _host_allowed(str(request.url), domains):
+            raise RuntimeError(
+                f"request to non-allow-listed host '{request.url.host}' refused "
+                "(QA_ALLOWED_DOMAINS, SEC-003)"
+            )
+
+    return _enforce
+
+
+@pytest.fixture()
+def api_client(base_url: str) -> Iterator[httpx.Client]:
+    """Allow-list-guarded HTTP client for generated API tests (SEC-003).
+
+    The browser guard above cannot cover non-browser tests, so this client
+    applies the same ``QA_ALLOWED_DOMAINS`` policy at the httpx layer: a
+    request hook refuses any request — first or redirect hop — whose host is
+    not allow-listed. Fails closed, like the browser route guard.
+    """
+    domains = _allowed_domains(os.environ.get("QA_ALLOWED_DOMAINS"))
+    client = httpx.Client(
+        base_url=base_url,
+        timeout=10.0,
+        follow_redirects=False,
+        event_hooks={"request": [_api_request_guard(domains)]},
+    )
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 @pytest.fixture(scope="session")

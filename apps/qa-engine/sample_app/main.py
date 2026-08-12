@@ -26,14 +26,28 @@ Selector contract (relied on by generated page objects — do not change):
     [data-testid=username], [data-testid=password], button 'Log in',
     [data-testid=flash], [data-testid=item], button 'Delete',
     [data-testid=new-item], button 'Add'.
+
+JSON API contract (relied on by generated API tests — additive to the HTML
+routes above, sharing the same in-memory state and seeded defects):
+    GET    /api/health          -> 200 {"status": "ok"}
+    POST   /api/login           -> 200 {"status": "ok", "token": ...} |
+                                   401 {"error": "invalid_credentials"} |
+                                   500 {"error": "server_error"} (defect 'login_message')
+    GET    /api/items           -> 200 {"items": [{"id", "text"}]} | 401
+    POST   /api/items           -> 201 {"item": {...}} | 401 | 422 (blank text);
+                                   defect 'duplicate_add' inserts twice
+    DELETE /api/items/{item_id} -> 204 | 401 | 404; defect 'delete_noop'
+                                   returns 204 without deleting
+    Auth: 'Authorization: Bearer <token>' from /api/login, or the session cookie.
 """
 
 import html
 import os
 import secrets
 
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Form, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 app = FastAPI(title="QA Demo Target App", redoc_url=None)
 
@@ -214,3 +228,100 @@ def delete_item(request: Request, idx: int) -> RedirectResponse:
     if "delete_noop" not in defects() and 0 <= idx < len(ITEMS):
         ITEMS.pop(idx)
     return RedirectResponse(url="/items", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# JSON API (additive; exercised by generated API tests — see module docstring)
+# ---------------------------------------------------------------------------
+
+
+class LoginPayload(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+class ItemPayload(BaseModel):
+    text: str = ""
+
+
+def _api_session(request: Request) -> str | None:
+    """Resolve the caller's session from a Bearer token or the cookie.
+
+    The API issues the same session tokens as the HTML login, so the two
+    surfaces stay behaviourally equivalent for regression comparison.
+    """
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[len("Bearer "):].strip()
+        if token in SESSIONS:
+            return token
+    return current_session(request)
+
+
+@app.get("/api/health")
+def api_health() -> dict[str, str]:
+    """JSON liveness probe (mirror of /health under the API namespace)."""
+    return {"status": "ok"}
+
+
+@app.post("/api/login")
+def api_login(payload: LoginPayload) -> JSONResponse:
+    """JSON login: 200 + token on success, 401 on bad credentials.
+
+    Seeded defect 'login_message' (SRS §15.2): failures surface as a
+    misleading 500 'server_error' instead of 401 'invalid_credentials' —
+    the API-visible twin of the HTML flash defect.
+    """
+    valid_user, valid_pass = expected_credentials()
+    if payload.username == valid_user and payload.password == valid_pass:
+        token = secrets.token_urlsafe(24)
+        SESSIONS[token] = payload.username
+        response = JSONResponse({"status": "ok", "token": token})
+        response.set_cookie(SESSION_COOKIE, token, httponly=True)
+        return response
+    if "login_message" in defects():
+        return JSONResponse({"error": "server_error"}, status_code=500)
+    return JSONResponse({"error": "invalid_credentials"}, status_code=401)
+
+
+@app.get("/api/items")
+def api_list_items(request: Request) -> JSONResponse:
+    """List items as JSON; 401 without a valid session."""
+    if _api_session(request) is None:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    items = [{"id": idx, "text": text} for idx, text in enumerate(ITEMS)]
+    return JSONResponse({"items": items})
+
+
+@app.post("/api/items")
+def api_add_item(request: Request, payload: ItemPayload) -> JSONResponse:
+    """Add an item: 201 + the created item, 422 on blank text, 401 unauthenticated.
+
+    Seeded defect 'duplicate_add' (SRS §15.2): the item is inserted twice —
+    observable here as a duplicate in the next GET /api/items.
+    """
+    if _api_session(request) is None:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    text = payload.text.strip()
+    if not text:
+        return JSONResponse({"error": "text_required"}, status_code=422)
+    ITEMS.append(text)
+    if "duplicate_add" in defects():
+        ITEMS.append(text)
+    return JSONResponse({"item": {"id": len(ITEMS) - 1, "text": text}}, status_code=201)
+
+
+@app.delete("/api/items/{item_id}", response_model=None)
+def api_delete_item(request: Request, item_id: int) -> JSONResponse | Response:
+    """Delete an item by id: 204 on success, 404 out of range, 401 unauthenticated.
+
+    Seeded defect 'delete_noop' (SRS §15.2): responds 204 but leaves the
+    item in place.
+    """
+    if _api_session(request) is None:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if not 0 <= item_id < len(ITEMS):
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    if "delete_noop" not in defects():
+        ITEMS.pop(item_id)
+    return Response(status_code=204)

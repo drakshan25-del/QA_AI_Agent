@@ -126,3 +126,88 @@ class TestItems:
         response = client.post("/items/add", data={"text": "sneaky"})
         assert str(response.url).endswith("/login")
         assert len(sample_app.ITEMS) == before
+
+
+def _api_login(client: TestClient, username: str = USERNAME, password: str = PASSWORD):
+    return client.post("/api/login", json={"username": username, "password": password})
+
+
+def _bearer(client: TestClient) -> dict[str, str]:
+    token = _api_login(client).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+class TestJsonApi:
+    """The additive /api/* JSON surface shares state and seeded defects with
+    the HTML routes (module docstring 'JSON API contract')."""
+
+    def test_api_health(self, client):
+        assert client.get("/api/health").json() == {"status": "ok"}
+
+    def test_login_returns_token(self, client):
+        response = _api_login(client)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "ok"
+        assert body["token"] in sample_app.SESSIONS
+
+    def test_login_rejects_bad_password(self, client):
+        response = _api_login(client, password="wrong-" + PASSWORD)
+        assert response.status_code == 401
+        assert response.json() == {"error": "invalid_credentials"}
+
+    def test_seeded_login_message_defect_becomes_500(self, client, monkeypatch):
+        monkeypatch.setenv("SAMPLE_APP_DEFECTS", "login_message")
+        response = _api_login(client, password="wrong-" + PASSWORD)
+        assert response.status_code == 500
+        assert response.json() == {"error": "server_error"}
+
+    def test_items_require_auth(self, client):
+        assert client.get("/api/items").status_code == 401
+        assert client.post("/api/items", json={"text": "x"}).status_code == 401
+        assert client.delete("/api/items/0").status_code == 401
+
+    def test_bearer_token_lists_items(self, client):
+        response = client.get("/api/items", headers=_bearer(client))
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["text"] for item in items] == sample_app.ITEMS
+        assert all(set(item) == {"id", "text"} for item in items)
+
+    def test_add_item_appears_in_html_list_too(self, client):
+        headers = _bearer(client)
+        response = client.post("/api/items", json={"text": "api-added"}, headers=headers)
+        assert response.status_code == 201
+        assert response.json()["item"]["text"] == "api-added"
+        # Shared state: the HTML surface sees the API-added item.
+        assert sample_app.ITEMS.count("api-added") == 1
+
+    def test_blank_text_rejected_with_422(self, client):
+        response = client.post("/api/items", json={"text": "   "}, headers=_bearer(client))
+        assert response.status_code == 422
+        assert response.json() == {"error": "text_required"}
+
+    def test_seeded_duplicate_add_defect_inserts_twice(self, client, monkeypatch):
+        headers = _bearer(client)
+        monkeypatch.setenv("SAMPLE_APP_DEFECTS", "duplicate_add")
+        client.post("/api/items", json={"text": "dup-api"}, headers=headers)
+        assert sample_app.ITEMS.count("dup-api") == 2
+
+    def test_delete_removes_item(self, client):
+        headers = _bearer(client)
+        target = sample_app.ITEMS[0]
+        response = client.delete("/api/items/0", headers=headers)
+        assert response.status_code == 204
+        assert target not in sample_app.ITEMS
+
+    def test_delete_out_of_range_404(self, client):
+        response = client.delete(f"/api/items/{len(sample_app.ITEMS)}", headers=_bearer(client))
+        assert response.status_code == 404
+
+    def test_seeded_delete_noop_defect_keeps_item(self, client, monkeypatch):
+        headers = _bearer(client)
+        monkeypatch.setenv("SAMPLE_APP_DEFECTS", "delete_noop")
+        target = sample_app.ITEMS[0]
+        response = client.delete("/api/items/0", headers=headers)
+        assert response.status_code == 204
+        assert sample_app.ITEMS[0] == target

@@ -40,6 +40,7 @@ from app.models.schemas import (
     TestPlanOutput,
     ValidationReport,
 )
+from app.services.regression import compare_runs
 from app.services.report_service import render_report_html, render_report_md
 from app.services.validation import validate_generated_code
 from engine.contracts.schemas import (
@@ -232,7 +233,12 @@ def automation(body: dict = Body(...), x_engine_token: str | None = Header(defau
     try:
         out = automation_agent.generate_automation(
             body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""),
-            model=body.get("model"), temperature=body.get("temperature"))
+            model=body.get("model"), temperature=body.get("temperature"),
+            test_type=body.get("testType", "ui"),
+            extra_markers=body.get("extraMarkers"),
+            api_summary=body.get("apiSummary", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
@@ -278,6 +284,25 @@ def execution_plan(body: dict = Body(...), x_engine_token: str | None = Header(d
         plans.append(ExecutionPlan(test_case_id=case.get("id", ""), case_key=case.get("case_key", ""),
                                    title=case.get("title", ""), steps=steps))
     return {"schema_version": SCHEMA_VERSION, "plans": [p.model_dump() for p in plans]}
+
+
+# --- regression comparison (UI/API/Regression triad) ------------------------
+
+
+@app.post("/internal/v1/regression-compare")
+def regression_compare(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> dict:
+    """Classify a run's per-test results against a baseline run (stateless).
+
+    Body: ``{"baseline": [{node_id, outcome}, ...], "current": [...]}`` — the
+    shape ``parse_junit`` produces. Returns transition lists plus a summary
+    whose ``has_regressions`` flag is the CI quality-gate signal.
+    """
+    _auth(x_engine_token)
+    baseline = body.get("baseline")
+    current = body.get("current")
+    if not isinstance(baseline, list) or not isinstance(current, list):
+        raise HTTPException(status_code=422, detail="baseline and current must be lists of results")
+    return compare_runs(baseline, current)
 
 
 # --- classification + report (FR-RES/REP) ----------------------------------

