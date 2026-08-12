@@ -1,12 +1,18 @@
 # Playwright CI pipeline for AI-generated tests (SRS §12.2).
 # No Ollama / LLM step runs in CI — generation happens locally only (§12.3).
 #
-# Two suites, separated deliberately:
-#   - smoke: targets the bundled sample app started inside the runner; always runs.
-#   - generated: targets the project's real staging environment; runs ONLY when
-#     the repository defines the QA_TARGET_BASE_URL variable and credentials
-#     secrets — otherwise those tests would run against the wrong host and fail
-#     by construction.
+# Five suites, separated deliberately:
+#   - smoke: hand-written happy-path suite against the bundled sample app
+#     started inside the runner; always runs.
+#   - ui / api / regression: AI-generated suites (markers 'ui', 'api',
+#     'regression') that also target the in-runner sample app — 'api' runs
+#     browser-free through the api_client fixture; 'regression' re-verifies
+#     previously-working core flows (UI + API) on every push.
+#   - generated (staging): AI-generated tests for the project's real staging
+#     environment; runs ONLY when the repository defines the
+#     QA_TARGET_BASE_URL variable and credentials secrets — otherwise those
+#     tests would run against the wrong host and fail by construction. The
+#     marker expression excludes the local ui/api/regression suites above.
 name: Playwright CI
 
 on:
@@ -65,8 +71,58 @@ jobs:
           --screenshot only-on-failure --tracing retain-on-failure
           --output artifacts/ci
 
-      # Generated tests were authored against the configured staging target;
-      # skip them entirely unless that target (and its credentials) exist.
+      # AI-generated UI suite — browser tests against the in-runner sample app.
+      # Exit code 5 (no tests matched) is tolerated so the pipeline survives a
+      # repo state where a suite has not been generated yet.
+      - name: Run generated UI suite against the sample app
+        env:
+          QA_TARGET_BASE_URL: http://localhost:8001
+          QA_ALLOWED_DOMAINS: localhost,127.0.0.1
+        run: |
+          set +e
+          uv run pytest -m "ui and generated" \
+            --junitxml=reports/junit-ui.xml \
+            --html=reports/report-ui.html --self-contained-html \
+            --screenshot only-on-failure --tracing retain-on-failure \
+            --output artifacts/ci-ui
+          code=$?
+          [ "$code" -eq 5 ] && { echo "no ui-suite tests collected"; exit 0; }
+          exit $code
+
+      # AI-generated API suite — browser-free, via the api_client fixture.
+      - name: Run generated API suite against the sample app
+        env:
+          QA_TARGET_BASE_URL: http://localhost:8001
+          QA_ALLOWED_DOMAINS: localhost,127.0.0.1
+        run: |
+          set +e
+          uv run pytest -m "api and generated and not regression" \
+            --junitxml=reports/junit-api.xml \
+            --html=reports/report-api.html --self-contained-html
+          code=$?
+          [ "$code" -eq 5 ] && { echo "no api-suite tests collected"; exit 0; }
+          exit $code
+
+      # AI-generated regression suite — re-verifies previously-working core
+      # flows (UI + API) so a release that breaks them fails the pipeline.
+      - name: Run generated regression suite against the sample app
+        env:
+          QA_TARGET_BASE_URL: http://localhost:8001
+          QA_ALLOWED_DOMAINS: localhost,127.0.0.1
+        run: |
+          set +e
+          uv run pytest -m "regression and generated" \
+            --junitxml=reports/junit-regression.xml \
+            --html=reports/report-regression.html --self-contained-html \
+            --screenshot only-on-failure --tracing retain-on-failure \
+            --output artifacts/ci-regression
+          code=$?
+          [ "$code" -eq 5 ] && { echo "no regression-suite tests collected"; exit 0; }
+          exit $code
+
+      # Generated tests authored against the configured staging target; skip
+      # them entirely unless that target (and its credentials) exist. The
+      # local sample-app suites above are excluded by marker.
       - name: Run generated suite against the configured target
         if: vars.QA_TARGET_BASE_URL != ''
         env:
@@ -75,7 +131,7 @@ jobs:
           QA_TEST_USERNAME: ${{ secrets.QA_TEST_USERNAME }}
           QA_TEST_PASSWORD: ${{ secrets.QA_TEST_PASSWORD }}
         run: >
-          uv run pytest -m generated
+          uv run pytest -m "generated and not ui and not api and not regression"
           --junitxml=reports/junit-generated.xml
           --html=reports/report-generated.html --self-contained-html
           --screenshot only-on-failure --tracing retain-on-failure
