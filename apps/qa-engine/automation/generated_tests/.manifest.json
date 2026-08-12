@@ -1,5 +1,22 @@
 {
   "files": {
+    "test_api_items.py": {
+      "sha256": "8f02a7f9ec694b15d3cf0099ae530863c0642c496ba5c9fc44c29be3915789cd",
+      "test_case_ids": [
+        "tc301",
+        "tc302"
+      ],
+      "written_at": "2026-08-12T10:42:01.109179+00:00"
+    },
+    "test_api_items_2.py": {
+      "sha256": "e8024974d506e20e5e8bba490e51076c8bb88bfe29cc97d2ae564ebe0d1b1d22",
+      "test_case_ids": [
+        "tc303",
+        "tc304",
+        "tc305"
+      ],
+      "written_at": "2026-08-12T10:42:01.109432+00:00"
+    },
     "test_login.py": {
       "sha256": "2d808e26b52744aec6b3e608c18ef437722b6d2e0b22d28de8933b3b0e34cfd3",
       "test_case_ids": [
@@ -7,6 +24,53 @@
         "17cfb9f8fe0b4fffa74f856a95f08a29"
       ],
       "written_at": "2026-07-16T17:50:42.190675+00:00"
+    },
+    "test_regression_api_items.py": {
+      "sha256": "6c9326cee1b3612c76c71075f60ebd787461b3cc9f9882cae59e31ec3d07dc2f",
+      "test_case_ids": [
+        "TC-503",
+        "TC-504"
+      ],
+      "written_at": "2026-08-12T10:44:31.071076+00:00"
+    },
+    "test_regression_api_login.py": {
+      "sha256": "0cb74420424259917e5c4bdd99322dfd731ad772a9e00b9979b086b69e181612",
+      "test_case_ids": [
+        "tc501"
+      ],
+      "written_at": "2026-08-12T10:46:33.772312+00:00"
+    },
+    "test_regression_api_login_2.py": {
+      "sha256": "fdcd545418d5a472ca022c7e3309a339c1967b5f70dd28dc2b263ef1ee8585d1",
+      "test_case_ids": [
+        "tc502"
+      ],
+      "written_at": "2026-08-12T10:46:33.772544+00:00"
+    },
+    "test_regression_ui_items.py": {
+      "sha256": "a2ca0e5a373d353a64df93773b4f88a956481c3141425a23136934e55dba38a0",
+      "test_case_ids": [
+        "tc403",
+        "tc404"
+      ],
+      "written_at": "2026-08-12T10:44:04.846403+00:00"
+    },
+    "test_regression_ui_login.py": {
+      "sha256": "d26bb2d4d19f45ba1524e21624dcaad1461dc2fa799dcc47dcca5ee8ae91fa81",
+      "test_case_ids": [
+        "tc401",
+        "tc402"
+      ],
+      "written_at": "2026-08-12T10:43:51.178870+00:00"
+    },
+    "test_ui_items.py": {
+      "sha256": "add4ba1f89393a74ad231e83ce9770901214ad9a0158e89e68ae3a869bf772d3",
+      "test_case_ids": [
+        "tc201",
+        "tc202",
+        "tc203"
+      ],
+      "written_at": "2026-08-12T10:44:52.756112+00:00"
     }
   }
 }

@@ -63,6 +63,9 @@ markers = [
     "e2e: full workflow tests",
     "generated: AI-generated Playwright tests",
     "smoke: minimal happy-path suite for CI gates",
+    "ui: browser UI tests driven through Playwright",
+    "api: HTTP API tests driven through the api_client fixture (no browser)",
+    "regression: regression suite guarding previously-verified behaviour",
 ]
 addopts = "-ra"
 junit_family = "xunit2"
