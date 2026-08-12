@@ -45,6 +45,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "apps/qa-engine/uv.lock"
+          # The post-job 'uv cache prune --ci' has hung and failed the run
+          # (exit 2 after a 5-minute stall) with all test steps green; skip
+          # pruning — the dependency cache stays keyed on uv.lock regardless.
+          prune-cache: false
 
       # §12.2: reproducible dependency set — install from the committed uv.lock.
       # uv provisions the Python pinned in .python-version automatically.
