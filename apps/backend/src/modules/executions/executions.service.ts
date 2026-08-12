@@ -72,7 +72,12 @@ export interface EffectiveSettings {
   slowMoMs: number;
   screenshotMode: 'on-failure' | 'every-test' | 'off';
   video: boolean;
+  /** pytest -m marker expression selecting the suite (e.g. 'api', 'regression'). */
+  markers?: string;
 }
+
+/** Characters allowed in a pytest -m expression: names, and/or/not, parentheses. */
+const MARKER_EXPRESSION_RE = /^[A-Za-z0-9_()\s]*$/;
 
 @Injectable()
 export class ExecutionsService {
@@ -310,6 +315,14 @@ export class ExecutionsService {
     }
 
     const settings = this.resolveSettings(dto.settings);
+    const markers = (dto.markers ?? '').trim();
+    if (!MARKER_EXPRESSION_RE.test(markers)) {
+      throw new ValidationFailedException(
+        'markers must be a pytest -m expression (marker names, and/or/not, parentheses).',
+        { markers },
+      );
+    }
+    if (markers) settings.markers = markers;
     const { testPaths, automationIds, scope } = await this.resolveScope(dto);
 
     const run = await this.runs.save(
@@ -580,7 +593,7 @@ export class ExecutionsService {
           environment: run.environment,
           allowedDomains: project?.allowedDomains ?? 'localhost,127.0.0.1',
           targetBaseUrl: project?.baseUrl ?? '',
-          markers: '',
+          markers: settings.markers ?? '',
           timeoutSeconds: settings.timeoutSeconds,
           retries: settings.retries,
           workers: settings.workers,

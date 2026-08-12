@@ -95,7 +95,9 @@ export class CiService {
     let ciUrl = '';
     if (this.githubToken && project.repository.includes('/')) {
       try {
-        const workflow = dto.workflow || 'qa.yml';
+        // Default to the workflow that actually exists in this repository
+        // (.github/workflows/playwright-ci.yml) — 'qa.yml' would 404.
+        const workflow = dto.workflow || 'playwright-ci.yml';
         const ref = dto.ref || 'main';
         await axios.post(
           `https://api.github.com/repos/${project.repository}/actions/workflows/${workflow}/dispatches`,

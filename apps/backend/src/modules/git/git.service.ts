@@ -80,7 +80,10 @@ export class GitService {
       );
     }
 
-    const branch = `qa/${(dto.branchSuffix || 'automation').replace(/[^\w.\-/]/g, '-')}`;
+    // 'ai-tests/' matches both the engine's branch_prefix and the CI push
+    // trigger (.github/workflows/playwright-ci.yml: branches 'ai-tests/**');
+    // the previous 'qa/' prefix produced branches CI never picked up.
+    const branch = `ai-tests/${(dto.branchSuffix || 'automation').replace(/[^\w.\-/]/g, '-')}`;
     const result = await this.writeAndCommit(projectId, branch, dto.message, arts);
 
     await this.audit.record({
