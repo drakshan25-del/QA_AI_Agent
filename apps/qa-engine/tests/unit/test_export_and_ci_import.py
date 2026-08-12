@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.services.ci_import as ci_import_module
+import app.services.execution as execution_module
 from app.api import export, git_ci
 from app.models.db import Base, get_db
 # Test* entity names are aliased so pytest does not try to collect them.
@@ -48,10 +49,11 @@ pytestmark = pytest.mark.unit
 
 _SECRET_KEY_PARTS = ("password", "token", "secret")
 
-#: JUnit fixture: the two login tests resolve to real repo test functions in
-#: automation/generated_tests/test_login.py so the '# TC: TC-###' comment
-#: linker is exercised end-to-end (FR-RES-001); 'test_invalid_password_login_
-#: failure' guards the TC-003 comment-format fix.
+#: JUnit fixture: the two login tests resolve to test functions in a fixture
+#: source file written under tmp_path by ``ci_stubs`` (with REPO_ROOT pointed
+#: there), so the '# TC: TC-###' comment linker is exercised end-to-end
+#: (FR-RES-001) without depending on the mutable real generated-tests tree;
+#: 'test_invalid_password_login_failure' guards the TC-003 comment-format fix.
 _JUNIT_XML = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites>
   <testsuite name="pytest" errors="0" failures="1" skipped="0" tests="3" time="4.2">
@@ -348,6 +350,25 @@ def ci_stubs(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ci_import_module, "get_settings", lambda: SimpleNamespace(artifacts_path=tmp_path)
     )
+    # Self-contained '# TC:' linking (FR-RES-001): the JUnit classnames resolve
+    # against a fixture source tree under tmp_path, not the real (mutable)
+    # automation/generated_tests directory.
+    linked_src = tmp_path / "automation" / "generated_tests" / "test_login.py"
+    linked_src.parent.mkdir(parents=True, exist_ok=True)
+    # Functions are spaced further apart than the linker's ±8-line scan window
+    # so each def only ever sees its own marker (as in real generated files).
+    spacer = "\n" * 10
+    linked_src.write_text(
+        "# TC: TC-001\n"
+        "def test_successful_login(page):\n"
+        "    pass\n"
+        f"{spacer}"
+        "# TC: TC-003\n"
+        "def test_invalid_password_login_failure(page):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(execution_module, "REPO_ROOT", tmp_path)
     return tmp_path
 
 
