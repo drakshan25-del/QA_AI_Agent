@@ -17,6 +17,9 @@ __pycache__/
 test-results/
 playwright-report/
 
+# Local dev server logs
+apps/qa-engine/*.log
+
 # Build caches
 *.tsbuildinfo
 

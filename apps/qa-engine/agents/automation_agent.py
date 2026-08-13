@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.core.config import get_settings
 from app.core.llm import generation_metadata, get_chat_model, require_ollama
@@ -161,9 +161,18 @@ def _ensure_parses(files: list[GeneratedFile]) -> None:
         try:
             ast.parse(f.content, filename=f.path)
         except SyntaxError as exc:
+            lineno = exc.lineno or 1
+            snippet = "\n".join(
+                f"{no:>4}: {line}"
+                for no, line in enumerate(f.content.splitlines(), 1)
+                if abs(no - lineno) <= 2
+            )
+            logger.warning(
+                "generated %s has a syntax error at line %d:\n%s", f.path, lineno, snippet
+            )
             raise ValueError(
                 f"generated file {PurePosixPath(f.path).name} does not parse: {exc.msg} "
-                f"(line {exc.lineno})"
+                f"(line {exc.lineno}); offending code:\n{snippet}"
             ) from exc
 
 
@@ -585,7 +594,9 @@ def generate_automation(
     attempts = settings.llm_max_retries + 1
     last_error: Exception | None = None
     result: AutomationOutput | None = None
+    base_temperature = settings.llm_temperature if temperature is None else temperature
     for attempt in range(1, attempts + 1):
+        candidate: AutomationOutput | None = None
         try:
             raw = chat.invoke(messages)
             candidate = (
@@ -612,6 +623,26 @@ def generate_automation(
             last_error = exc
             logger.warning(
                 "automation generation attempt %d/%d failed: %s", attempt, attempts, exc
+            )
+            if attempt >= attempts:
+                continue
+            # Replaying the identical prompt at near-zero temperature just
+            # reproduces the same bad file; show the model what it wrote and
+            # why it was rejected, and sample wider each round (FR-AUT-008).
+            if candidate is not None:
+                messages = messages + [AIMessage(content=candidate.model_dump_json())]
+            messages = messages + [
+                HumanMessage(
+                    content=(
+                        f"Your previous response was rejected: {exc}\n"
+                        "Regenerate the COMPLETE structured output with this problem "
+                        "fixed, still following every framework rule."
+                    )
+                )
+            ]
+            retry_temperature = min(0.9, base_temperature + 0.25 * attempt)
+            chat = get_chat_model(effective_model, retry_temperature).with_structured_output(
+                AutomationOutput
             )
     if result is None:
         raise RuntimeError(

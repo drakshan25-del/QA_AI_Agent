@@ -1,51 +1,24 @@
-import re
-
 import pytest
 from playwright.sync_api import Page, expect
 
-from automation.pages.sample_login_page import SampleLoginPage
+from automation.pages.login_page import LoginPage
+from automation.pages.sample_items_page import SampleItemsPage
 
 pytestmark = [pytest.mark.generated]
-
-# Public, documented practice credentials for practicetestautomation.com.
-VALID_USERNAME = "student"
-VALID_PASSWORD = "Password123"
-
-# NOTE: these tests deliberately do NOT depend on the ``target_available``
-# fixture. That fixture probes the target with httpx, which cannot pass the
-# Cloudflare JS challenge fronting practicetestautomation.com (it returns
-# 406/409 to non-browser clients) and would spuriously skip the suite. A real
-# Chromium browser solves the challenge, so we let the browser navigate.
-
-
-# TC-001 Valid Email and Password Login
+# TC: a35396f7-9f2a-49f2-b536-17f3e6e0654d User logs in with valid credentials from login page
 # REQ: REQ-1,REQ-2
-def test_valid_email_password_login(page: Page, base_url: str) -> None:
-    login = SampleLoginPage(page, base_url)
-    login.login(VALID_USERNAME, VALID_PASSWORD)
-    expect(page).to_have_url(re.compile(r".*logged-in-successfully.*"))
-    expect(login.success_heading).to_be_visible()
+def test_user_logs_in_with_valid_credentials_from_login_page(page: Page, base_url: str, credentials, target_available) -> None:
+    login = LoginPage(page, base_url)
+    login.goto()
+    login.login(credentials.username, credentials.password)
+    expect(page).to_have_url(base_url + '/web/index.php/dashboard')
 
-
-# TC-002 Invalid Email Login
-# REQ: REQ-1,REQ-3
-def test_invalid_email_login(page: Page, base_url: str) -> None:
-    login = SampleLoginPage(page, base_url)
-    login.login("incorrectUser", VALID_PASSWORD)
-    expect(login.error_message).to_contain_text("Your username is invalid!")
-
-
-# TC-003 Invalid Password Login
-# REQ: REQ-1,REQ-4
-def test_invalid_password_login(page: Page, base_url: str) -> None:
-    login = SampleLoginPage(page, base_url)
-    login.login(VALID_USERNAME, "wrongPassword")
-    expect(login.error_message).to_contain_text("Your password is invalid!")
-
-
-# TC-004 Empty Email and Password Fields
-# REQ: REQ-1,REQ-5
-def test_empty_email_password_fields(page: Page, base_url: str) -> None:
-    login = SampleLoginPage(page, base_url)
-    login.login("", "")
-    expect(login.error_message).to_contain_text("Your username is invalid!")
+# TC: 7c1811f1-3285-40c8-99d1-5b83757b517f User logs in with valid credentials from non-login page
+# REQ: REQ-1,REQ-2
+def test_user_logs_in_with_valid_credentials_from_non_login_page(page: Page, base_url: str, credentials, target_available) -> None:
+    non_login_page = SampleItemsPage(page, base_url)
+    non_login_page.goto()
+    non_login_page.click(non_login_page.login_link)
+    login = LoginPage(page, base_url)
+    login.login(credentials.username, credentials.password)
+    expect(page).to_have_url(base_url + '/web/index.php/dashboard')
