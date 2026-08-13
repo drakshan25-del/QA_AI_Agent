@@ -20,6 +20,10 @@ export const qk = {
   automationItem: (id: string) => ['automation', id] as const,
   executionPlan: (id: string) => ['automation', id, 'execution-plan'] as const,
   execution: (id: string) => ['executions', id] as const,
+  projectExecutions: (projectId: string) =>
+    [...qk.project(projectId), 'executions'] as const,
+  regressionComparisons: (projectId: string) =>
+    [...qk.project(projectId), 'regression-comparisons'] as const,
   executionEvents: (id: string) => ['executions', id, 'events'] as const,
   executionReport: (id: string) => ['executions', id, 'report'] as const,
   jobs: (projectId: string) => ['projects', projectId, 'jobs'] as const,

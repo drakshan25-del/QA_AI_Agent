@@ -7,7 +7,7 @@ import { LinkButton } from '../components/ui/LinkButton';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useProjectId } from '../features/projects/hooks';
-import { ciApi, executionsApi, projectsApi } from '../services/api/endpoints';
+import { ciApi, executionsApi, projectsApi, regressionApi } from '../services/api/endpoints';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
 import { qk } from '../services/api/queryKeys';
 import { formatRelative } from '../lib/format';
@@ -153,14 +153,28 @@ function CiPanel({ projectId }: { projectId: string }): JSX.Element {
   );
 }
 
+/** Statuses that make a run a sensible regression baseline candidate. */
+const BASELINE_ELIGIBLE_STATUSES = new Set([
+  'passed',
+  'failed',
+  'partially_passed',
+  'completed',
+]);
+
 export function ProjectReportsPage(): JSX.Element {
   const projectId = useProjectId();
+  const qc = useQueryClient();
   // Purpose-built list endpoint — the full project export (documents, plans,
   // cases, artifacts…) is far too heavy just to render the runs table.
   const executionsQuery = useQuery({
-    queryKey: [...qk.project(projectId), 'executions'],
+    queryKey: qk.projectExecutions(projectId),
     queryFn: () => executionsApi.listByProject(projectId),
     enabled: !!projectId,
+  });
+  const markBaseline = useMutation({
+    mutationFn: (runId: string) => regressionApi.markBaseline(runId),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.projectExecutions(projectId) }),
   });
 
   return (
@@ -170,6 +184,7 @@ export function ProjectReportsPage(): JSX.Element {
       <CiPanel projectId={projectId} />
 
       <Card title="Executions">
+        {markBaseline.isError && <ErrorBanner error={markBaseline.error} />}
         <QueryState query={executionsQuery} loadingLabel="Loading executions…">
           {(data) => {
             const executions = (data ?? [])
@@ -198,7 +213,15 @@ export function ProjectReportsPage(): JSX.Element {
                   <tbody>
                     {executions.map((e) => (
                       <tr key={e.id}>
-                        <td className={L.mono}>{e.id.slice(0, 8)}</td>
+                        <td className={L.mono}>
+                          {e.id.slice(0, 8)}
+                          {e.isBaseline && (
+                            <>
+                              {' '}
+                              <StatusBadge status="idle" label="baseline" />
+                            </>
+                          )}
+                        </td>
                         <td>
                           <StatusBadge status={e.status} />
                         </td>
@@ -225,6 +248,21 @@ export function ProjectReportsPage(): JSX.Element {
                             <LinkButton small to={`/executions/${e.id}/report`}>
                               Report
                             </LinkButton>
+                            {!e.isBaseline &&
+                              BASELINE_ELIGIBLE_STATUSES.has(e.status) && (
+                                <Button
+                                  small
+                                  variant="ghost"
+                                  loading={
+                                    markBaseline.isPending &&
+                                    markBaseline.variables === e.id
+                                  }
+                                  disabled={markBaseline.isPending}
+                                  onClick={() => markBaseline.mutate(e.id)}
+                                >
+                                  Mark baseline
+                                </Button>
+                              )}
                           </div>
                         </td>
                       </tr>

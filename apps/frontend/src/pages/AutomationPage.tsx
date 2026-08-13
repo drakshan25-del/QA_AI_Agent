@@ -6,6 +6,7 @@ import { LiveJobConsole } from '../components/LiveJobConsole';
 import { QueryState } from '../components/QueryState';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Select } from '../components/ui/Field';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Banner, ErrorBanner } from '../components/ui/Banner';
@@ -175,7 +176,9 @@ function ArtifactDetail({
     <div className={L.stack}>
       <Card
         title={artifact.path}
-        subtitle={`${artifact.kind} · v${artifact.version} · ${artifact.status}`}
+        subtitle={`${artifact.kind} · ${artifact.testType ?? 'ui'}${
+          artifact.regressionSuite ? ' · regression' : ''
+        } · v${artifact.version} · ${artifact.status}`}
         actions={
           <div className={L.row}>
             <StatusBadge status={artifact.validationStatus} label={`validation: ${artifact.validationStatus}`} />
@@ -350,6 +353,8 @@ export function AutomationPage(): JSX.Element {
   useProjectEvents(projectId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [testType, setTestType] = useState<'ui' | 'api'>('ui');
+  const [regressionSuite, setRegressionSuite] = useState(false);
 
   const listQuery = useQuery({
     queryKey: qk.automation(projectId),
@@ -370,7 +375,8 @@ export function AutomationPage(): JSX.Element {
 
   const approvedIds = (approvedCasesQuery.data?.items ?? []).map((c) => c.id);
   const generate = useMutation({
-    mutationFn: () => automationApi.generate(projectId, approvedIds),
+    mutationFn: () =>
+      automationApi.generate(projectId, approvedIds, { testType, regressionSuite }),
     onSuccess: (data) => {
       setActiveJobId(data.jobId);
       void qc.invalidateQueries({ queryKey: qk.jobs(projectId) });
@@ -383,15 +389,35 @@ export function AutomationPage(): JSX.Element {
         title="Automation"
         subtitle="Generated code, validation, traceability and execution plan (FR-AUT-*)"
         actions={
-          <Button
-            variant="primary"
-            loading={generate.isPending}
-            disabled={approvedIds.length === 0 || generate.isPending}
-            title={approvedIds.length === 0 ? 'Approve test cases first (FR-TC-009)' : undefined}
-            onClick={() => generate.mutate()}
-          >
-            Generate from {approvedIds.length} approved case{approvedIds.length === 1 ? '' : 's'}
-          </Button>
+          <div className={L.row} style={{ gap: 8, alignItems: 'end' }}>
+            <Select
+              label="Test type"
+              value={testType}
+              onChange={(e) => setTestType(e.target.value as 'ui' | 'api')}
+              style={{ width: 90 }}
+            >
+              <option value="ui">UI</option>
+              <option value="api">API</option>
+            </Select>
+            <label className={L.row} style={{ gap: 4, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                aria-label="Regression suite"
+                checked={regressionSuite}
+                onChange={(e) => setRegressionSuite(e.target.checked)}
+              />
+              <span>Regression suite</span>
+            </label>
+            <Button
+              variant="primary"
+              loading={generate.isPending}
+              disabled={approvedIds.length === 0 || generate.isPending}
+              title={approvedIds.length === 0 ? 'Approve test cases first (FR-TC-009)' : undefined}
+              onClick={() => generate.mutate()}
+            >
+              Generate from {approvedIds.length} approved case{approvedIds.length === 1 ? '' : 's'}
+            </Button>
+          </div>
         }
       />
 
@@ -423,6 +449,12 @@ export function AutomationPage(): JSX.Element {
                         onClick={() => setSelectedId(a.id)}
                       >
                         <span className={s.treePath}>{a.path}</span>
+                        {a.testType && (
+                          <StatusBadge
+                            status="idle"
+                            label={`${a.testType}${a.regressionSuite ? ' · regression' : ''}`}
+                          />
+                        )}
                         <StatusBadge status={a.approvalStatus} />
                       </button>
                     </li>

@@ -460,6 +460,10 @@ export interface GeneratedArtifact {
   approvalStatus: ApprovalStatus;
   approvalInvalidated: boolean;
   schemaVersion: string;
+  /** Kind of generated test — 'ui' (default) or 'api'. */
+  testType?: string;
+  /** True when the artifact was generated as part of a regression suite. */
+  regressionSuite?: boolean;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -522,11 +526,49 @@ export interface ExecutionRun {
   ciUrl: string;
   correlationId: string;
   report: Record<string, unknown> | null;
+  /** True when this run is the project's single regression baseline. */
+  isBaseline?: boolean;
   startedAt: string | null;
   finishedAt: string | null;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---- Regression comparisons -------------------------------------------------
+
+/** Engine diff between a baseline run and a candidate run. */
+export interface RegressionResult {
+  regressions: string[];
+  fixes: string[];
+  still_failing: string[];
+  skipped: string[];
+  new_tests: Array<{ node_id: string; status: 'pass' | 'fail' | 'skip' }>;
+  missing_tests: string[];
+  stable_passes: number;
+  summary: {
+    baseline_total: number;
+    current_total: number;
+    regressed: number;
+    fixed: number;
+    still_failing: number;
+    new: number;
+    missing: number;
+    has_regressions: boolean;
+  };
+}
+
+export interface RegressionComparison {
+  id: string;
+  projectId: string;
+  baselineRunId: string;
+  candidateRunId: string;
+  hasRegressions: boolean;
+  result: RegressionResult;
+  createdBy: string;
+  correlationId?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface ExecutionEventRow {

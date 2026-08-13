@@ -31,6 +31,7 @@ import type {
   Project,
   ProjectWithSummary,
   PublicUser,
+  RegressionComparison,
   Requirement,
   Role,
   SourceDocument,
@@ -345,11 +346,16 @@ export const automationApi = {
   async generate(
     projectId: string,
     testCaseIds: string[],
-    draftPreview?: boolean,
+    opts?: {
+      draftPreview?: boolean;
+      /** 'ui' (default) or 'api'. */
+      testType?: 'ui' | 'api';
+      regressionSuite?: boolean;
+    },
   ): Promise<JobAccepted> {
     const { data } = await http.post<JobAccepted>(
       `/projects/${projectId}/automation/generate`,
-      { testCaseIds, draftPreview },
+      { testCaseIds, ...opts },
     );
     return data;
   },
@@ -464,6 +470,39 @@ export const executionsApi = {
     format: 'pdf' | 'html' | 'json' | 'junit' | 'csv',
   ): string {
     return `/executions/${id}/report/export?format=${format}`;
+  },
+};
+
+// ---- Regression comparisons -------------------------------------------------
+
+export const regressionApi = {
+  /** Diff a candidate run against a baseline run. */
+  async compare(
+    projectId: string,
+    baselineRunId: string,
+    candidateRunId: string,
+  ): Promise<RegressionComparison> {
+    const { data } = await http.post<RegressionComparison>(
+      `/projects/${projectId}/regression-comparisons`,
+      { baselineRunId, candidateRunId },
+    );
+    return data;
+  },
+  /** Comparison history, newest first. */
+  async list(projectId: string): Promise<RegressionComparison[]> {
+    const { data } = await http.get<RegressionComparison[]>(
+      `/projects/${projectId}/regression-comparisons`,
+    );
+    return data;
+  },
+  async get(id: string): Promise<RegressionComparison> {
+    const { data } = await http.get<RegressionComparison>(`/regression-comparisons/${id}`);
+    return data;
+  },
+  /** Mark a run as the project's single regression baseline. */
+  async markBaseline(runId: string): Promise<ExecutionRun> {
+    const { data } = await http.post<ExecutionRun>(`/executions/${runId}/baseline`, {});
+    return data;
   },
 };
 

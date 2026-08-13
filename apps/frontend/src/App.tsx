@@ -18,6 +18,7 @@ import { TestPlanPage } from './pages/TestPlanPage';
 import { TestCasesPage } from './pages/TestCasesPage';
 import { AutomationPage } from './pages/AutomationPage';
 import { ValidationPage } from './pages/ValidationPage';
+import { RegressionPage } from './pages/RegressionPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ExecutionLivePage } from './pages/ExecutionLivePage';
 import { ExecutionReportPage } from './pages/ExecutionReportPage';
@@ -54,6 +55,7 @@ export const router = createBrowserRouter(
         <Route path="/projects/:id/test-cases" element={<TestCasesPage />} />
         <Route path="/projects/:id/automation" element={<AutomationPage />} />
         <Route path="/projects/:id/validation" element={<ValidationPage />} />
+        <Route path="/projects/:id/regression" element={<RegressionPage />} />
         <Route path="/projects/:id/reports" element={<ProjectReportsPage />} />
 
         <Route path="/documents/:id/preview" element={<DocumentPreviewPage />} />

@@ -25,6 +25,7 @@ const projectLinks = (id: string): Array<{ to: string; label: string; end?: bool
   { to: `/projects/${id}/test-cases`, label: 'Test Cases' },
   { to: `/projects/${id}/automation`, label: 'Automation' },
   { to: `/projects/${id}/validation`, label: 'Validation' },
+  { to: `/projects/${id}/regression`, label: 'Regression' },
   { to: `/projects/${id}/reports`, label: 'Reports' },
   { to: `/projects/${id}/settings`, label: 'Settings' },
 ];
