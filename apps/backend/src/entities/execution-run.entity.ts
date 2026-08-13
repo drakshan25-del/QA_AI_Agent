@@ -72,6 +72,10 @@ export class ExecutionRun {
   @Column({ type: 'simple-json', nullable: true })
   report!: Record<string, unknown> | null;
 
+  /** Regression baseline flag — at most one run per project carries it. */
+  @Column({ type: 'boolean', name: 'is_baseline', default: false })
+  isBaseline!: boolean;
+
   @Column({ type: DATETIME_TYPE, name: 'started_at', nullable: true })
   startedAt!: Date | null;
 

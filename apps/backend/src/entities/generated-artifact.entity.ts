@@ -67,6 +67,13 @@ export class GeneratedArtifact {
   @Column({ type: 'varchar', name: 'schema_version', default: 'v1' })
   schemaVersion!: string;
 
+  /** ui|api — which generation flavour produced the file (CI marker algebra). */
+  @Column({ type: 'varchar', name: 'test_type', default: 'ui' })
+  testType!: string;
+
+  @Column({ type: 'boolean', name: 'regression_suite', default: false })
+  regressionSuite!: boolean;
+
   @Column({ type: 'varchar', name: 'created_by', nullable: true })
   createdBy!: string | null;
 

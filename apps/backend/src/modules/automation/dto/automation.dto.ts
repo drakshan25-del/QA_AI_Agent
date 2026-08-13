@@ -2,6 +2,7 @@ import {
   ArrayNotEmpty,
   IsArray,
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   MaxLength,
@@ -21,6 +22,19 @@ export class GenerateAutomationDto {
   @IsOptional()
   @IsBoolean()
   draftPreview?: boolean;
+
+  /** Browser UI tests (default) or HTTP API tests. */
+  @ApiPropertyOptional({ default: 'ui', enum: ['ui', 'api'] })
+  @IsOptional()
+  @IsIn(['ui', 'api'])
+  testType?: 'ui' | 'api';
+
+  @ApiPropertyOptional({
+    description: 'Tag the generated files as part of the regression suite',
+  })
+  @IsOptional()
+  @IsBoolean()
+  regressionSuite?: boolean;
 }
 
 /** In-place edit of a generated automation script (editable code editor). */

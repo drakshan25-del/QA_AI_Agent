@@ -79,13 +79,12 @@ export class ExecutionLoggerService {
   /** Return a stage-aware logger bound to one run. */
   forRun(ctx: ExecutionLogContext): ScopedExecutionLogger {
     let stage = '';
-    const svc = this;
     const emit = (
       level: ExecutionLogLevel,
       message: string,
       extra?: Partial<ExecutionLogInput>,
     ) =>
-      svc.write(ctx, {
+      this.write(ctx, {
         level,
         stage: extra?.stage ?? stage,
         message,

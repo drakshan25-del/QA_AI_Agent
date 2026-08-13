@@ -12,6 +12,7 @@ import { GeneratedArtifact } from './generated-artifact.entity';
 import { GenerationRun } from './generation-run.entity';
 import { ExecutionRun } from './execution-run.entity';
 import { TestResult } from './test-result.entity';
+import { RegressionComparison } from './regression-comparison.entity';
 import { Finding } from './finding.entity';
 import { Approval } from './approval.entity';
 import { AuditEvent } from './audit-event.entity';
@@ -38,6 +39,7 @@ export const ALL_ENTITIES = [
   GenerationRun,
   ExecutionRun,
   TestResult,
+  RegressionComparison,
   Finding,
   Approval,
   AuditEvent,
@@ -65,6 +67,7 @@ export {
   GenerationRun,
   ExecutionRun,
   TestResult,
+  RegressionComparison,
   Finding,
   Approval,
   AuditEvent,

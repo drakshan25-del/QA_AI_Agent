@@ -26,6 +26,7 @@ import { AutomationModule } from './modules/automation/automation.module';
 import { ExecutionsModule } from './modules/executions/executions.module';
 import { FindingsModule } from './modules/findings/findings.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { RegressionModule } from './modules/regression/regression.module';
 import { GitModule } from './modules/git/git.module';
 import { CiModule } from './modules/ci/ci.module';
 import { HealthModule } from './modules/health/health.module';
@@ -62,6 +63,7 @@ import { HealthModule } from './modules/health/health.module';
     ExecutionsModule,
     FindingsModule,
     ReportsModule,
+    RegressionModule,
     GitModule,
     CiModule,
     HealthModule,

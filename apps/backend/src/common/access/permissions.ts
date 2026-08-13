@@ -25,6 +25,7 @@ export type Permission =
   | 'approval.decide'
   | 'execution.run'
   | 'execution.control'
+  | 'regression.compare'
   | 'git.push'
   | 'ci.trigger'
   | 'classification.override'
@@ -49,6 +50,7 @@ export const PERMISSION_ROLES: Record<Permission, Role[]> = {
   'approval.decide': ['admin', 'qa_lead', 'reviewer', 'supervisor'],
   'execution.run': ALL_EDIT_ROLES,
   'execution.control': ALL_EDIT_ROLES,
+  'regression.compare': ALL_EDIT_ROLES,
   'git.push': ['admin', 'qa_lead', 'automation_engineer', 'devops'],
   'ci.trigger': ['admin', 'qa_lead', 'automation_engineer', 'devops'],
   'classification.override': [

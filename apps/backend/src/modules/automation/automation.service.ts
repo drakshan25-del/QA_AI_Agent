@@ -22,6 +22,21 @@ import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient } from '../../engine/engine.client';
 import { GenerateAutomationDto } from './dto/automation.dto';
 
+/**
+ * Extra pytest markers for a generation request (CI marker algebra): the UI
+ * suite runs `-m "ui and generated"` and the regression suite runs
+ * `-m regression`, so regression files carry only 'regression' — never 'ui' —
+ * to keep them out of the UI suite. The engine auto-adds the 'api' marker for
+ * testType 'api'.
+ */
+export function markersFor(
+  testType: 'ui' | 'api',
+  regressionSuite: boolean,
+): string[] {
+  if (regressionSuite) return ['regression'];
+  return testType === 'ui' ? ['ui'] : [];
+}
+
 @Injectable()
 export class AutomationService {
   constructor(
@@ -44,6 +59,8 @@ export class AutomationService {
         {
           testCaseIds: (original.inputRefs?.testCaseIds as string[]) ?? [],
           draftPreview: !!original.inputRefs?.draftPreview,
+          testType: (original.inputRefs?.testType as 'ui' | 'api') ?? 'ui',
+          regressionSuite: !!original.inputRefs?.regressionSuite,
         },
         user,
         correlationId,
@@ -89,12 +106,21 @@ export class AutomationService {
       }
     }
 
+    const testType = dto.testType ?? 'ui';
+    const regressionSuite = !!dto.regressionSuite;
+    const extraMarkers = markersFor(testType, regressionSuite);
+
     const job = await this.jobs.create({
       projectId,
       type: 'automation',
       correlationId,
       idempotencyKey,
-      inputRefs: { testCaseIds: dto.testCaseIds, draftPreview: !!dto.draftPreview },
+      inputRefs: {
+        testCaseIds: dto.testCaseIds,
+        draftPreview: !!dto.draftPreview,
+        testType,
+        regressionSuite,
+      },
       createdBy: user.id,
     });
 
@@ -106,7 +132,12 @@ export class AutomationService {
       resourceId: job.id,
       projectId,
       correlationId,
-      metadata: { testCases: cases.length, draftPreview: !!dto.draftPreview },
+      metadata: {
+        testCases: cases.length,
+        draftPreview: !!dto.draftPreview,
+        testType,
+        regressionSuite,
+      },
     });
 
     this.jobs.dispatch(job, async (j, ctx) => {
@@ -136,6 +167,8 @@ export class AutomationService {
           pageObjectsSummary: '',
           model: project.llmModel || undefined,
           temperature: project.llmTemperature,
+          testType,
+          extraMarkers,
         },
         correlationId,
         idempotencyKey,
@@ -180,6 +213,8 @@ export class AutomationService {
             validationStatus: 'pending',
             approvalStatus: 'pending',
             schemaVersion: (output.schema_version as string) || 'v1',
+            testType,
+            regressionSuite,
             createdBy: user.id,
           }),
         );

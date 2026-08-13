@@ -158,6 +158,8 @@ export class EngineClient {
       pageObjectsSummary?: string;
       model?: string;
       temperature?: number;
+      testType?: string;
+      extraMarkers?: string[];
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -182,6 +184,19 @@ export class EngineClient {
     correlationId?: string,
   ): Promise<Record<string, unknown>> {
     return this.post('/execution-plan', body, correlationId);
+  }
+
+  // --- regression comparison ----------------------------------------------
+  /** Stateless baseline/current outcome comparison — synchronous, so no
+   * Idempotency-Key (the engine persists nothing). */
+  async regressionCompare(
+    body: {
+      baseline: { node_id: string; outcome: string }[];
+      current: { node_id: string; outcome: string }[];
+    },
+    correlationId?: string,
+  ): Promise<RegressionCompareResult> {
+    return this.post('/regression-compare', body, correlationId);
   }
 
   // --- classification / report --------------------------------------------
@@ -313,6 +328,28 @@ export class EngineClient {
       await chain;
     }
   }
+}
+
+/** Engine `/regression-compare` response: per-test transition lists plus a
+ * summary whose `has_regressions` flag is the quality-gate signal. */
+export interface RegressionCompareResult {
+  regressions: string[];
+  fixes: string[];
+  still_failing: string[];
+  skipped: string[];
+  new_tests: { node_id: string; status: string }[];
+  missing_tests: string[];
+  stable_passes: number;
+  summary: {
+    baseline_total: number;
+    current_total: number;
+    regressed: number;
+    fixed: number;
+    still_failing: number;
+    new: number;
+    missing: number;
+    has_regressions: boolean;
+  };
 }
 
 export interface EngineParsedDocument {
