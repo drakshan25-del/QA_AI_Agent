@@ -17,8 +17,8 @@ React (Vite, :5173)  ──REST /api/v2/* + WS /api/v2/events──▶  NestJS b
 
 | Tier | Tech | Responsibility |
 |---|---|---|
-| **Frontend** (`apps/frontend/`) | React 18 + Vite + TypeScript | Upload, source preview, plan/case review, code viewer + diff, approvals, **live execution timeline**, reports, audit (FR-FE-*) |
-| **Backend** (`apps/backend/`) | NestJS + TypeORM | Auth/roles, projects, documents, approvals, jobs, executions, GitHub/CI, WebSocket events, audit — the system of record (FR-BE-*) |
+| **Frontend** (`apps/frontend/`) | React 18 + Vite + TypeScript | Upload, source preview, plan/case review, code viewer + diff, approvals, **live execution timeline**, reports, **regression comparison**, audit (FR-FE-*) |
+| **Backend** (`apps/backend/`) | NestJS + TypeORM | Auth/roles, projects, documents, approvals, jobs, executions, **regression baselines/comparisons**, GitHub/CI, WebSocket events, audit — the system of record (FR-BE-*) |
 | **Engine** (`apps/qa-engine/`) | Python FastAPI wrapping V1 logic | Parse docs, LangGraph/create_agent/ChatOllama generation, validation, Playwright execution with step events, classification, reporting (FR-ENG-*) |
 | **Database** | PostgreSQL (SQLite dev fallback) | Projects, documents/segments, artefacts, approvals, runs, events, audit (§10.1) |
 | **Real-time** | WebSocket/SSE | Step-by-step execution events to the browser (FR-EXE-006..008) |
@@ -65,7 +65,7 @@ Open http://localhost:5173, sign in with the seeded admin, create a project, upl
 ## Quality gates & tests
 
 ```bash
-# Python engine + V1 logic (162 tests)
+# Python engine + V1 logic
 cd apps/qa-engine && uv run pytest tests/unit -q
 
 # Backend: build, unit tests, lint
@@ -77,13 +77,21 @@ cd apps/frontend && npm run typecheck && npm test && npm run lint && npm run bui
 
 ## CI (GitHub Actions, SRS §12)
 
-`.github/workflows/playwright-ci.yml` runs two suites:
+`.github/workflows/playwright-ci.yml` runs five suites, selected by pytest
+markers (see `docs/V2_CONTRACT.md` §3 for the marker algebra):
 
-- **smoke** — always; targets the bundled `sample_app` started inside the runner.
-- **generated** — only when the repository defines the `QA_TARGET_BASE_URL`
-  (and optional `QA_ALLOWED_DOMAINS`) **variables** plus `QA_TEST_USERNAME` /
-  `QA_TEST_PASSWORD` **secrets**; these AI-generated tests target the
-  configured staging environment, never the sample app.
+- **smoke** — always; hand-written happy path against the bundled `sample_app`
+  started inside the runner.
+- **ui** / **api** / **regression** — the AI-generated suites, also against the
+  in-runner sample app; `api` runs browser-free through the `api_client`
+  fixture. After the regression suite, a **regression gate**
+  (`scripts/regression_gate.py`) compares `junit-regression.xml` against the
+  baseline from the last successful `main` run and fails the job when a
+  previously passing test now fails. A missing baseline is tolerated.
+- **generated (staging)** — only when the repository defines the
+  `QA_TARGET_BASE_URL` (and optional `QA_ALLOWED_DOMAINS`) **variables** plus
+  `QA_TEST_USERNAME` / `QA_TEST_PASSWORD` **secrets**; these AI-generated tests
+  target the configured staging environment, never the sample app.
 
 Reports (JUnit + self-contained HTML), screenshots and traces upload as the
 `test-results` artifact on every run, pass or fail (§12.2).
