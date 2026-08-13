@@ -26,9 +26,11 @@ FRONTEND_DIR="$ROOT/apps/frontend"
 : "${SEED_ADMIN_PASSWORD:=change-me-admin}"
 : "${QA_OLLAMA_BASE_URL:=http://localhost:11434}"
 : "${QA_LLM_MODEL:=qwen2.5:latest}"
-# Dedicated code model for automation generation (falls back to the project
-# model while the fine-tuned model has not been created in Ollama yet).
-: "${QA_LLM_CODER_MODEL:=qwen2.5-coder-qa:7b}"
+# Dedicated code model for automation generation. The base coder model is
+# deliberately preferred over the qwen2.5-coder-qa fine-tune: the fine-tune
+# hallucinates page-object methods and emits unparseable files often enough
+# to exhaust the generation retry budget.
+: "${QA_LLM_CODER_MODEL:=qwen2.5-coder:7b}"
 : "${QA_TARGET_BASE_URL:=http://localhost:8001}"
 : "${QA_ALLOWED_DOMAINS:=localhost,127.0.0.1}"
 

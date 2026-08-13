@@ -11,8 +11,12 @@ Run:
 
 Credentials come from the environment (never hard-coded secrets — the
 defaults below are documented demo placeholders, see FR-PROJ-004):
-    QA_TEST_USERNAME  (default: demo@example.com)
-    QA_TEST_PASSWORD  (default: change-me)
+    QA_TEST_USERNAME      demo login        (default: demo@example.com)
+    QA_TEST_PASSWORD                        (default: change-me)
+    SAMPLE_ADMIN_EMAIL    seeded admin      (defaults to QA_TEST_USERNAME)
+    SAMPLE_ADMIN_PASSWORD                   (defaults to QA_TEST_PASSWORD)
+By default the demo login IS the seeded admin, so it lands on /dashboard;
+set SAMPLE_ADMIN_* to a different pair to keep a separate non-admin user.
 
 Seeded defects are toggled via the SAMPLE_APP_DEFECTS env var, a
 comma-separated list read fresh on every request so tests can flip flags
@@ -27,10 +31,14 @@ Selector contract (relied on by generated page objects — do not change):
     [data-testid=flash], [data-testid=item], button 'Delete',
     [data-testid=new-item], button 'Add'.
 
+Login redirect contract: an *admin* account (the seeded one, or any created
+on /admin) lands on /dashboard; a non-admin env user lands on /items. Both
+see the same 'Welcome' [data-testid=flash].
+
 JSON API contract (relied on by generated API tests — additive to the HTML
 routes above, sharing the same in-memory state and seeded defects):
     GET    /api/health          -> 200 {"status": "ok"}
-    POST   /api/login           -> 200 {"status": "ok", "token": ...} |
+    POST   /api/login           -> 200 {"status": "ok", "token", "role"} |
                                    401 {"error": "invalid_credentials"} |
                                    500 {"error": "server_error"} (defect 'login_message')
     GET    /api/items           -> 200 {"items": [{"id", "text"}]} | 401
@@ -39,78 +47,31 @@ routes above, sharing the same in-memory state and seeded defects):
     DELETE /api/items/{item_id} -> 204 | 401 | 404; defect 'delete_noop'
                                    returns 204 without deleting
     Auth: 'Authorization: Bearer <token>' from /api/login, or the session cookie.
+
+Admin features (Features 1-3) live in their own routers — dashboard_routes,
+admin_routes, product_routes — all admin-only. Feature 4 slots in the same
+way: add a router module and include it below.
 """
 
 import html
-import os
 import secrets
 
 from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
+from sample_app import admin_routes, dashboard_routes, product_routes, store, ui
+from sample_app.store import (  # re-exported for tests and backwards compatibility
+    FLASHES,
+    ITEMS,
+    SESSION_COOKIE,
+    SESSIONS,
+    current_session,
+    defects,
+    expected_credentials,
+)
+
 app = FastAPI(title="QA Demo Target App", redoc_url=None)
-
-SESSION_COOKIE = "session"
-
-# In-memory state (reset on restart — SRS §16 controlled demo environment).
-SESSIONS: dict[str, str] = {}  # session token -> username
-FLASHES: dict[str, str] = {}  # session token -> pending flash message
-ITEMS: list[str] = ["Write test plan", "Review requirements", "Fix flaky test"]
-
-
-def defects() -> set[str]:
-    """Return the currently active seeded-defect flags.
-
-    Reads SAMPLE_APP_DEFECTS from the environment on every call so tests
-    can toggle defects at runtime without restarting the app (SRS §15.2:
-    defect detection rate against known seeded defects).
-
-    Returns:
-        Set of active defect flag names, e.g. {'login_message'}.
-    """
-    raw = os.environ.get("SAMPLE_APP_DEFECTS", "")
-    return {flag.strip() for flag in raw.split(",") if flag.strip()}
-
-
-def expected_credentials() -> tuple[str, str]:
-    """Return the valid (username, password) pair from the environment.
-
-    Credentials are referenced via env vars only, never stored in code or
-    passed to LLM prompts (FR-PROJ-004, FR-CI-004). Read per request so a
-    test harness can rotate them without a restart.
-    """
-    username = os.environ.get("QA_TEST_USERNAME", "demo@example.com")
-    password = os.environ.get("QA_TEST_PASSWORD", "change-me")
-    return username, password
-
-
-def current_session(request: Request) -> str | None:
-    """Return the session token from the request cookie if it is valid."""
-    token = request.cookies.get(SESSION_COOKIE)
-    if token and token in SESSIONS:
-        return token
-    return None
-
-
-PAGE_SHELL = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }}
-    [data-testid=flash] {{ padding: .5rem .75rem; border: 1px solid #888; margin-bottom: 1rem; }}
-    li {{ margin: .25rem 0; }}
-    form.inline {{ display: inline; margin-left: .5rem; }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  {body}
-</body>
-</html>"""
 
 LOGIN_BODY = """{flash}
   <form method="post" action="/login">
@@ -135,17 +96,10 @@ ITEM_ROW = """    <li data-testid="item">{text}
     </li>"""
 
 
-def render_flash(message: str | None) -> str:
-    """Render the flash <div data-testid="flash"> block, or nothing."""
-    if not message:
-        return ""
-    return f'<div data-testid="flash">{html.escape(message)}</div>'
-
-
-def render_login(flash: str | None = None) -> HTMLResponse:
+def render_login(flash: str | None = None, kind: str = "error") -> HTMLResponse:
     """Render the login page, optionally with a flash message."""
-    body = LOGIN_BODY.format(flash=render_flash(flash))
-    return HTMLResponse(PAGE_SHELL.format(title="Log in", body=body))
+    body = LOGIN_BODY.format(flash=ui.render_flash(flash, kind if flash else "info"))
+    return ui.page("Log in", body)
 
 
 @app.get("/health")
@@ -164,23 +118,45 @@ def login_page() -> HTMLResponse:
 def login_submit(username: str = Form(""), password: str = Form("")) -> HTMLResponse | RedirectResponse:
     """Handle a login attempt.
 
-    Success sets a session cookie and redirects to /items with a
+    An active admin account is redirected to /dashboard (Feature 1); the
+    regular env user keeps the original /items redirect. Both get a
     'Welcome' flash. Failure re-renders the form with an error flash.
 
     Seeded defect 'login_message' (SRS §15.2): the failure flash reads
     'Server error' instead of 'Invalid credentials'.
     """
+    admin = store.verify_admin_login(username, password)
+    if admin is not None:
+        token = secrets.token_urlsafe(24)
+        SESSIONS[token] = admin["email"]
+        store.set_flash(token, "Welcome", "success")
+        response = RedirectResponse(url="/dashboard", status_code=303)
+        response.set_cookie(SESSION_COOKIE, token, httponly=True)
+        return response
+
     valid_user, valid_pass = expected_credentials()
     if username == valid_user and password == valid_pass:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = username
-        FLASHES[token] = "Welcome"
+        store.set_flash(token, "Welcome", "success")
         response = RedirectResponse(url="/items", status_code=303)
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
 
     message = "Server error" if "login_message" in defects() else "Invalid credentials"
     return render_login(flash=message)
+
+
+@app.post("/logout")
+def logout(request: Request) -> RedirectResponse:
+    """End the session (both surfaces share the token store)."""
+    token = current_session(request)
+    if token is not None:
+        SESSIONS.pop(token, None)
+        FLASHES.pop(token, None)
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 @app.get("/items", response_class=HTMLResponse, response_model=None)
@@ -190,12 +166,13 @@ def items_page(request: Request) -> HTMLResponse | RedirectResponse:
     if token is None:
         return RedirectResponse(url="/login", status_code=303)
 
-    flash = FLASHES.pop(token, None)
+    message, kind = store.pop_flash(token)
     rows = "\n".join(
         ITEM_ROW.format(text=html.escape(text), idx=idx) for idx, text in enumerate(ITEMS)
     )
-    body = ITEMS_BODY.format(flash=render_flash(flash), items=rows)
-    return HTMLResponse(PAGE_SHELL.format(title="Items", body=body))
+    body = ITEMS_BODY.format(flash=ui.render_flash(message, kind), items=rows)
+    audience = "admin" if store.session_admin(request) else "user"
+    return ui.page("Items", body, nav=(audience, SESSIONS.get(token, "")))
 
 
 @app.post("/items/add")
@@ -245,17 +222,8 @@ class ItemPayload(BaseModel):
 
 
 def _api_session(request: Request) -> str | None:
-    """Resolve the caller's session from a Bearer token or the cookie.
-
-    The API issues the same session tokens as the HTML login, so the two
-    surfaces stay behaviourally equivalent for regression comparison.
-    """
-    auth = request.headers.get("Authorization", "")
-    if auth.startswith("Bearer "):
-        token = auth[len("Bearer "):].strip()
-        if token in SESSIONS:
-            return token
-    return current_session(request)
+    """Resolve the caller's session from a Bearer token or the cookie."""
+    return store.api_session(request)
 
 
 @app.get("/api/health")
@@ -266,17 +234,28 @@ def api_health() -> dict[str, str]:
 
 @app.post("/api/login")
 def api_login(payload: LoginPayload) -> JSONResponse:
-    """JSON login: 200 + token on success, 401 on bad credentials.
+    """JSON login: 200 + token (+role) on success, 401 on bad credentials.
+
+    Admin accounts get role 'admin'; the regular env user gets role 'user'
+    (additive key — the original status/token contract is unchanged).
 
     Seeded defect 'login_message' (SRS §15.2): failures surface as a
     misleading 500 'server_error' instead of 401 'invalid_credentials' —
     the API-visible twin of the HTML flash defect.
     """
+    admin = store.verify_admin_login(payload.username, payload.password)
+    if admin is not None:
+        token = secrets.token_urlsafe(24)
+        SESSIONS[token] = admin["email"]
+        response = JSONResponse({"status": "ok", "token": token, "role": "admin"})
+        response.set_cookie(SESSION_COOKIE, token, httponly=True)
+        return response
+
     valid_user, valid_pass = expected_credentials()
     if payload.username == valid_user and payload.password == valid_pass:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = payload.username
-        response = JSONResponse({"status": "ok", "token": token})
+        response = JSONResponse({"status": "ok", "token": token, "role": "user"})
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
     if "login_message" in defects():
@@ -325,3 +304,12 @@ def api_delete_item(request: Request, item_id: int) -> JSONResponse | Response:
     if "delete_noop" not in defects():
         ITEMS.pop(item_id)
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Feature routers (admin-only). Feature 4: add its router module here.
+# ---------------------------------------------------------------------------
+
+app.include_router(dashboard_routes.router)
+app.include_router(admin_routes.router)
+app.include_router(product_routes.router)
