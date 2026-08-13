@@ -54,7 +54,7 @@ export function Layout(): JSX.Element {
           <span className={s.logo} aria-hidden="true">
             QA
           </span>
-          <span>Agentic QA System</span>
+          <span>Agentic AI System</span>
           <span className={s.version}>v3</span>
         </div>
         <div className={s.topRight}>
