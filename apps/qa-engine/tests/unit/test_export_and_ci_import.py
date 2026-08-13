@@ -478,3 +478,32 @@ class TestCIImport:
     def test_import_endpoint_unknown_project_404(self, client, ci_stubs):
         response = client.post("/ci/runs/12345/import?project_id=missing")
         assert response.status_code == 404
+
+
+class TestFindJunitReport:
+    """The multi-suite workflow uploads junit-{ui,api,regression}.xml next to
+    the smoke suite's junit.xml — the exact name must win over sorted order,
+    where junit-api.xml would otherwise be imported."""
+
+    def test_exact_junit_xml_preferred_over_suite_reports(self, tmp_path):
+        (tmp_path / "junit-api.xml").write_text("<testsuite/>", encoding="utf-8")
+        (tmp_path / "junit-regression.xml").write_text("<testsuite/>", encoding="utf-8")
+        (tmp_path / "junit.xml").write_text("<testsuite/>", encoding="utf-8")
+        found = ci_import_module._find_junit_report(tmp_path)
+        assert found == tmp_path / "junit.xml"
+
+    def test_exact_junit_xml_found_in_nested_directory(self, tmp_path):
+        (tmp_path / "junit-api.xml").write_text("<testsuite/>", encoding="utf-8")
+        nested = tmp_path / "reports"
+        nested.mkdir()
+        (nested / "junit.xml").write_text("<testsuite/>", encoding="utf-8")
+        assert ci_import_module._find_junit_report(tmp_path) == nested / "junit.xml"
+
+    def test_falls_back_to_sorted_first_without_exact_name(self, tmp_path):
+        (tmp_path / "junit-ui.xml").write_text("<testsuite/>", encoding="utf-8")
+        (tmp_path / "junit-api.xml").write_text("<testsuite/>", encoding="utf-8")
+        found = ci_import_module._find_junit_report(tmp_path)
+        assert found == tmp_path / "junit-api.xml"
+
+    def test_missing_directory_returns_none(self, tmp_path):
+        assert ci_import_module._find_junit_report(tmp_path / "nope") is None

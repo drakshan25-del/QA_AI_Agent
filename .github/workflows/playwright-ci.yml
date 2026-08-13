@@ -13,7 +13,20 @@
 #     QA_TARGET_BASE_URL variable and credentials secrets — otherwise those
 #     tests would run against the wrong host and fail by construction. The
 #     marker expression excludes the local ui/api/regression suites above.
+#
+# Regression gate: after the suites, the regression suite's junit report is
+# compared against the same report from the most recent successful run of
+# this workflow on main (downloaded from its 'test-results' artifact via
+# gh). scripts/regression_gate.py fails the job iff a test that passed in
+# that baseline fails now (summary.has_regressions); a missing baseline or
+# an empty regression suite skips the gate instead of failing it.
 name: Playwright CI
+
+# Least-privilege token: checkout needs contents, the baseline fetch reads
+# a prior run's artifact through the Actions API (gh run list/download).
+permissions:
+  contents: read
+  actions: read
 
 on:
   push:
@@ -123,6 +136,40 @@ jobs:
           code=$?
           [ "$code" -eq 5 ] && { echo "no regression-suite tests collected"; exit 0; }
           exit $code
+
+      # Baseline for the regression gate: the 'test-results' artifact of the
+      # most recent successful run of this workflow on main. Every command is
+      # guarded — no prior run, an expired artifact or a download failure just
+      # prints a note and leaves baseline-artifact/ absent (the gate then
+      # skips itself). The artifact root is apps/qa-engine (the least common
+      # ancestor of the uploaded reports/ + artifacts/ paths), so the report
+      # lands at baseline-artifact/reports/junit-regression.xml.
+      - name: Fetch regression baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          baseline_run=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow playwright-ci.yml \
+            --branch main --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -z "$baseline_run" ]; then
+            echo "no successful run of this workflow on main yet; no baseline to fetch"
+            exit 0
+          fi
+          echo "baseline: workflow run $baseline_run"
+          gh run download "$baseline_run" \
+            --repo "${{ github.repository }}" \
+            --name test-results --dir baseline-artifact \
+            || echo "baseline artifact 'test-results' unavailable (expired or not uploaded)"
+
+      # The gate itself: exits 1 (failing the job) iff a test that passed in
+      # the main baseline fails now; missing baseline/current reports exit 0.
+      - name: Regression gate (compare against main baseline)
+        run: >
+          uv run python scripts/regression_gate.py
+          baseline-artifact/reports/junit-regression.xml
+          reports/junit-regression.xml
 
       # Generated tests authored against the configured staging target; skip
       # them entirely unless that target (and its credentials) exist. The

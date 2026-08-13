@@ -3,8 +3,9 @@
 Turns a finished GitHub Actions workflow run into a CI-mode
 :class:`~app.models.entities.ExecutionRun`: the run status is fetched via
 ``tools.github_actions`` (FR-CI-002), every non-expired artifact is downloaded
-and extracted under ``<artifacts>/ci/<ci_run_id>/`` (FR-CI-003), and the first
-``junit*.xml`` found is parsed with :func:`app.services.results.parse_junit`
+and extracted under ``<artifacts>/ci/<ci_run_id>/`` (FR-CI-003), and one
+``junit*.xml`` (an exact ``junit.xml`` preferred over per-suite reports) is
+parsed with :func:`app.services.results.parse_junit`
 into :class:`~app.models.entities.TestResult` rows plus aggregate metrics
 (FR-RES-001, FR-EXE-004). A run without a JUnit report is still imported —
 the absence is noted in ``metrics`` instead of failing the import.
@@ -78,11 +79,20 @@ def _download_artifacts(ci_run_id: int, dest: Path) -> tuple[int, list[str]]:
 
 
 def _find_junit_report(dest: Path) -> Path | None:
-    """Locate the first extracted ``junit*.xml`` report, if any."""
+    """Locate the extracted JUnit report to import, if any.
+
+    The multi-suite CI workflow uploads per-suite reports (``junit-ui.xml``,
+    ``junit-api.xml``, ``junit-regression.xml``) alongside the primary
+    ``junit.xml`` from the smoke suite; a plain sorted-first pick would
+    import ``junit-api.xml`` instead. An exact ``junit.xml`` anywhere in the
+    tree therefore wins; otherwise the alphabetically first ``junit*.xml``
+    is used as before.
+    """
     if not dest.is_dir():
         return None
     candidates = sorted(p for p in dest.rglob("junit*.xml") if p.is_file())
-    return candidates[0] if candidates else None
+    exact = [p for p in candidates if p.name == "junit.xml"]
+    return (exact or candidates)[0] if candidates else None
 
 
 def import_ci_run(db: Session, project_id: str, ci_run_id: int) -> ExecutionRun:
