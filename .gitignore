@@ -1,16 +1,31 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
-.env
-*.db
-artifacts/*
-reports/*
-!reports/.gitkeep
-!artifacts/.gitkeep
+*.egg-info/
+.venv*/
 .pytest_cache/
+
+# Environment files
+.env
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Test run output
 test-results/
 playwright-report/
+
+# Local dev server logs
+apps/qa-engine/*.log
+logs/
+
+# Build caches
+*.tsbuildinfo
+
+# macOS
 .DS_Store
-*.egg-info/
+
+# Scratch
 Langchain_basics/
-docs/

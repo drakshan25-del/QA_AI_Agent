@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qa-ai-agents"
+version = "0.1.0"
+description = "Agentic AI Quality Assurance System - requirements analysis, test generation, Playwright automation, CI/CD execution, defect and test reporting"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Rakshan Dangol" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "SQLAlchemy>=2.0",
+    "langchain-core>=1.0",
+    "langchain-ollama>=1.0",
+    "langchain-openai>=1.0",
+    "langgraph>=1.0",
+    "playwright>=1.45",
+    "pytest>=8.0",
+    "pytest-playwright>=0.5",
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "python-multipart>=0.0.9",
+    "Jinja2>=3.1",
+    "httpx>=0.27",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+# V3 execution extras (FR-V3-EXE-011): per-test retries and parallel workers.
+# The engine runner degrades gracefully when these are absent.
+execution = [
+    "pytest-rerunfailures>=14.0",
+    "pytest-xdist>=3.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-html>=4.0",
+]
+# Local fine-tuning pipeline (finetune/): MLX LoRA training on Apple silicon
+# plus the llama.cpp GGUF conversion toolchain. Never needed at runtime.
+finetune = [
+    "mlx-lm>=0.21",
+    "torch>=2.4",
+    "gguf>=0.10",
+    "sentencepiece>=0.2",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "agents*", "graph*", "tools*", "engine*", "automation*", "sample_app*"]
+exclude = ["tests*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "automation/tests", "automation/generated_tests"]
+markers = [
+    "unit: fast tests with no external services",
+    "integration: tests requiring Ollama, GitHub or a browser",
+    "e2e: full workflow tests",
+    "generated: AI-generated Playwright tests",
+    "smoke: minimal happy-path suite for CI gates",
+    "ui: browser UI tests driven through Playwright",
+    "api: HTTP API tests driven through the api_client fixture (no browser)",
+    "regression: regression suite guarding previously-verified behaviour",
+]
+addopts = "-ra"
+junit_family = "xunit2"

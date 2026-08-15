@@ -1,0 +1,105 @@
+# V3 stack (SRS §16, Appendix A). Local dev orchestration for the apps/ monorepo.
+# Ollama runs on the host (http://host.docker.internal:11434) so the engine
+# reuses the researcher's local models without shipping them into a container.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: qa
+      POSTGRES_PASSWORD: qa
+      POSTGRES_DB: qa_v2
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qa -d qa_v2"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  engine:
+    build: { context: ./apps/qa-engine, dockerfile: engine/Dockerfile }
+    image: qa-engine:local
+    restart: unless-stopped
+    environment:
+      ENGINE_PORT: "8100"
+      ENGINE_TOKEN: ${ENGINE_TOKEN:-dev-engine-token}
+      QA_OLLAMA_BASE_URL: ${QA_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      QA_LLM_MODEL: ${QA_LLM_MODEL:-qwen2.5:latest}
+      # Dedicated code model for automation generation; falls back to the
+      # project model when this model is not present in Ollama.
+      QA_LLM_CODER_MODEL: ${QA_LLM_CODER_MODEL:-qwen2.5-coder-qa:7b}
+      # Docker executions default to the bundled demo target (sample-app service).
+      QA_TARGET_BASE_URL: ${QA_TARGET_BASE_URL:-http://sample-app:8001}
+      QA_ALLOWED_DOMAINS: ${QA_ALLOWED_DOMAINS:-localhost,127.0.0.1,sample-app}
+    ports: ["8100:8100"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["artifacts:/app/artifacts"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/internal/v1/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Demo target app for executions; reuses the engine image (identical build
+  # section + identical image tag, so Compose/BuildKit builds it only once).
+  sample-app:
+    build: { context: ./apps/qa-engine, dockerfile: engine/Dockerfile }
+    image: qa-engine:local
+    restart: unless-stopped
+    command: ["/app/.venv/bin/python", "-m", "uvicorn", "sample_app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["8001:8001"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  backend:
+    build: { context: ./apps/backend }
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      engine: { condition: service_healthy }
+    environment:
+      PORT: "4000"
+      DB_DRIVER: postgres
+      DATABASE_URL: postgres://qa:qa@postgres:5432/qa_v2
+      ENGINE_URL: http://engine:8100
+      ENGINE_TOKEN: ${ENGINE_TOKEN:-dev-engine-token}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret}
+      CORS_ORIGIN: http://localhost:5173
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-rakshandangol93@gmail.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-In-Silence-2026}
+      UPLOAD_DIR: /app/evidence
+      # Shared volume with the engine so the evidence retention sweep works.
+      ARTIFACTS_DIR: /app/artifacts
+    ports: ["4000:4000"]
+    volumes:
+      - "evidence:/app/evidence"
+      - "artifacts:/app/artifacts"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/api/v2/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      # Vite inlines these at build time; runtime environment would be inert.
+      args:
+        VITE_API_BASE: http://localhost:4000/api/v2
+        VITE_WS_BASE: ws://localhost:4000
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_healthy }
+    ports: ["5173:80"]
+
+volumes:
+  pgdata:
+  artifacts:
+  evidence:

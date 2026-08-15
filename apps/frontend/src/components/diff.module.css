@@ -1,0 +1,41 @@
+.diff {
+  margin: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: auto;
+  max-height: 65vh;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--surface);
+}
+.line {
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.add {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.del {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.hunk {
+  background: var(--info-bg);
+  color: var(--info);
+}
+.meta {
+  color: var(--text-muted);
+}
+.ctx {
+  color: var(--text);
+}
+.empty {
+  color: var(--text-muted);
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
