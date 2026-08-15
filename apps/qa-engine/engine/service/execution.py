@@ -18,6 +18,8 @@ Lifecycle guarantees (NFR-REL-001):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import signal
@@ -62,8 +64,50 @@ def is_running(run_id: str) -> bool:
 #: Generated files may only ever be written under these repo-relative roots.
 _MATERIALISE_ROOTS = ("automation",)
 
+#: Framework files every generated test and page object depends on. They are
+#: git-owned — the backend deliberately never sends them with a run
+#: (RESERVED_AUTOMATION_BASENAMES) — so when one is missing from the workspace
+#: the run must fail fast with a repair hint instead of dying later in pytest
+#: collection with a truncated ModuleNotFoundError (AIQA-EXEC-003).
+_FRAMEWORK_PREREQUISITES = (
+    "automation/__init__.py",
+    "automation/conftest.py",
+    "automation/pages/__init__.py",
+    "automation/pages/base_page.py",
+)
 
-def materialise_files(files: list[dict]) -> list[str]:
+#: Directory whose materialised ``test_*.py`` files are pytest collection
+#: targets; everything else materialised (page objects) is import-only.
+_GENERATED_TESTS_DIR = "automation/generated_tests"
+
+#: Ownership record of every file this engine has materialised (repo-relative
+#: path → sha256 of the content last written). FR-AUT-007 applied to the
+#: runtime workspace: only files the engine itself wrote may be replaced.
+_MATERIALISE_MANIFEST = "automation/.materialised.json"
+
+
+def _sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _load_materialise_manifest() -> dict:
+    path = REPO_ROOT / _MATERIALISE_MANIFEST
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("files"), dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"files": {}}
+
+
+def _save_materialise_manifest(manifest: dict) -> None:
+    (REPO_ROOT / _MATERIALISE_MANIFEST).write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+
+
+def materialise_files(files: list[dict]) -> tuple[list[str], list[str]]:
     """Write approved generated files into the workspace before a run.
 
     The backend (system of record) sends ``[{path, content}]``; the engine
@@ -71,9 +115,22 @@ def materialise_files(files: list[dict]) -> list[str]:
     against the repo root AND restricted to ``automation/`` so a malicious
     path can never escape or overwrite engine/backend code (SEC-005, §13.1).
 
-    Returns the list of repo-relative paths written.
+    Ownership guard (AIQA-EXEC-003): a target that already exists with
+    different content is only overwritten when this engine wrote what is on
+    disk (tracked by content hash in ``automation/.materialised.json``).
+    Anything else — the framework's own ``base_page.py``, hand-written page
+    objects, files edited outside the system — is kept and reported, never
+    clobbered: a generated ``base_page.py`` artifact once overwrote the real
+    instrumented BasePage and broke every UI test with an AttributeError.
+
+    Returns:
+        ``(written, kept)``: repo-relative paths written (or already
+        identical), and paths kept because the engine does not own them.
     """
+    manifest = _load_materialise_manifest()
     written: list[str] = []
+    kept: list[str] = []
+    manifest_changed = False
     for f in files or []:
         path = str(f.get("path") or "").strip()
         content = f.get("content")
@@ -89,10 +146,30 @@ def materialise_files(files: list[dict]) -> list[str]:
         target = (REPO_ROOT / rel).resolve()
         if not target.is_relative_to(REPO_ROOT):
             raise ValueError(f"generated file path {path!r} escapes the repository")
+        key = rel.as_posix()
+        if target.exists():
+            on_disk = target.read_text(encoding="utf-8")
+            if on_disk == content:
+                # Byte-identical: claim ownership so a future updated version
+                # of this artifact can still be materialised.
+                if manifest["files"].get(key) != _sha256(content):
+                    manifest["files"][key] = _sha256(content)
+                    manifest_changed = True
+                written.append(key)
+                continue
+            if manifest["files"].get(key) != _sha256(on_disk):
+                # Exists, differs, and the engine did not write what is on
+                # disk: hand-written or externally modified — keep it.
+                kept.append(key)
+                continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        written.append(rel.as_posix())
-    return written
+        manifest["files"][key] = _sha256(content)
+        manifest_changed = True
+        written.append(key)
+    if manifest_changed:
+        _save_materialise_manifest(manifest)
+    return written, kept
 
 
 def _terminate_group(proc: subprocess.Popen) -> None:
@@ -113,6 +190,57 @@ def _terminate_group(proc: subprocess.Popen) -> None:
     timer = threading.Timer(_KILL_GRACE_SECONDS, _force_kill)
     timer.daemon = True
     timer.start()
+
+
+def _all_skipped_error(metrics: dict, tests: list[dict]) -> str | None:
+    """Explain a run in which every collected test was skipped (NFR-USA-002).
+
+    ``passed 0, failed 0, skipped N`` reads as a mystery failure; in this
+    framework a whole-suite skip almost always means the ``target_available``
+    probe found the target app unreachable. Surface the skip reason so the
+    log says WHY nothing was verified.
+    """
+    if metrics.get("total", 0) <= 0 or metrics.get("skipped", 0) != metrics.get("total"):
+        return None
+    raw = next((t.get("message", "") for t in tests if t.get("message")), "")
+    # JUnit skip messages append a "path:line: reason" detail block; only the
+    # first line is the human reason.
+    reason = raw.splitlines()[0].strip() if raw else ""
+    return (
+        f"All {metrics['total']} test(s) were skipped"
+        + (f" — {reason}" if reason else "")
+        + ". Nothing was verified: check that the target app is running and "
+        "the project's base URL is correct."
+    )
+
+
+#: Cap on the pytest-output excerpt stored in ``metrics.error``. Big enough
+#: for a full ERRORS section; small enough for a log line / API payload.
+_ERROR_EXCERPT_CHARS = 2000
+
+
+def _pytest_error_excerpt(stdout: str) -> str:
+    """Slice of pytest output that explains a collection/import failure.
+
+    A blind last-N-chars tail can cut off the terminal ``E ModuleNotFoundError``
+    line and surface only pytest's 'valid Python names' hint. Prefer the
+    ``ERRORS`` section (it runs to the end of the output, so the ``E `` lines
+    and the short summary survive); fall back to the error/summary lines, then
+    to the plain tail.
+    """
+    text = (stdout or "").strip()
+    idx = text.rfind("= ERRORS =")
+    if idx != -1:
+        excerpt = text[text.rfind("\n", 0, idx) + 1 :]
+    else:
+        picked = [
+            line
+            for line in text.splitlines()
+            if line.startswith(("E ", "E   ", "ERROR "))
+            or "short test summary info" in line
+        ]
+        excerpt = "\n".join(picked) if picked else text
+    return excerpt[-_ERROR_EXCERPT_CHARS:]
 
 
 def _flaky_count(stdout: str, parsed_tests: list[dict]) -> int:
@@ -149,6 +277,7 @@ def run_execution(
     headed: bool = False,
     environment: str = "local",
     target_base_url: str = "",
+    target_api_base_url: str = "",
     allowed_domains: str = "localhost,127.0.0.1",
     markers: str = "",
     timeout_seconds: int = 900,
@@ -176,6 +305,7 @@ def run_execution(
             headed=headed,
             environment=environment,
             target_base_url=target_base_url,
+            target_api_base_url=target_api_base_url,
             allowed_domains=allowed_domains,
             markers=markers,
             timeout_seconds=timeout_seconds,
@@ -209,6 +339,7 @@ def _run_execution_inner(
     headed: bool,
     environment: str,
     target_base_url: str,
+    target_api_base_url: str,
     allowed_domains: str,
     markers: str,
     timeout_seconds: int,
@@ -226,16 +357,40 @@ def _run_execution_inner(
     # Materialise approved generated files sent with the run (AIQA-EXEC-001):
     # the DB is the artefact store; without this, pytest is pointed at paths
     # that may not exist in the engine workspace.
-    written = materialise_files(files or [])
-    if written:
+    written, kept = materialise_files(files or [])
+    if written or kept:
+        detail = f"materialised {len(written)} generated file(s)"
+        if kept:
+            detail += (
+                "; kept existing (not runner-owned, never overwritten): "
+                + ", ".join(sorted(kept))
+            )
         eventbus.emit(run_id, "execution.status", {
-            "run_id": run_id, "status": "preparing",
-            "detail": f"materialised {len(written)} generated file(s)",
+            "run_id": run_id, "status": "preparing", "detail": detail,
         })
-        # Any materialised file not already in test_paths should be run too.
+        # Materialised test modules not already in test_paths should be run
+        # too. Page objects are imported dependencies, never collection
+        # targets — handing them to pytest turns any import problem into a
+        # whole-run collection abort (mirrors the backend's page_object
+        # exclusion when it builds testPaths).
         for path in written:
-            if path not in test_paths:
+            name = Path(path).name
+            is_test_module = (
+                path.startswith(_GENERATED_TESTS_DIR + "/")
+                and name.startswith("test_")
+                and name.endswith(".py")
+            )
+            if is_test_module and path not in test_paths:
                 test_paths.append(path)
+
+    missing = [p for p in _FRAMEWORK_PREREQUISITES if not (REPO_ROOT / p).is_file()]
+    if missing:
+        raise RuntimeError(
+            "automation workspace is damaged — missing framework file(s): "
+            + ", ".join(missing)
+            + ". Restore them from git (repository root): git checkout -- "
+            + " ".join(f"apps/qa-engine/{p}" for p in missing)
+        )
 
     screenshot_flag = {
         "on-failure": "only-on-failure",
@@ -272,6 +427,8 @@ def _run_execution_inner(
         "QA_EVENT_SINK_TOKEN": engine_token,
         "QA_RUN_ID": run_id,
         "QA_TARGET_BASE_URL": target_base_url or env.get("QA_TARGET_BASE_URL", ""),
+        "QA_TARGET_API_BASE_URL": target_api_base_url
+        or env.get("QA_TARGET_API_BASE_URL", ""),
         "QA_ALLOWED_DOMAINS": allowed_domains,
         "QA_ENVIRONMENT": environment,
     })
@@ -315,14 +472,18 @@ def _run_execution_inner(
         # Pure collection/import errors (nothing actually ran) must carry the
         # pytest output so the UI can explain WHAT failed (NFR-USA-002).
         if metrics["errors"] > 0 and metrics["passed"] + metrics["failed"] == 0:
-            tail = redact_secrets((stdout or "").strip()[-800:])
+            tail = redact_secrets(_pytest_error_excerpt(stdout))
             metrics["error"] = f"Tests could not be collected/imported. Pytest output:\n{tail}"
             status = "timed_out" if timed_out else "error"
+        else:
+            skipped_error = _all_skipped_error(metrics, parsed["tests"])
+            if skipped_error:
+                metrics["error"] = redact_secrets(skipped_error)
     elif parsed is not None:
         # A junit report with zero tests means nothing was collected (missing
         # file, import error, bad marker) — surface the pytest output instead
         # of reporting a silent all-zero "completion" (NFR-USA-002).
-        tail = redact_secrets((stdout or "").strip()[-800:])
+        tail = redact_secrets(_pytest_error_excerpt(stdout))
         metrics = {
             "passed": 0, "failed": 0, "skipped": 0, "errors": 0,
             "duration_seconds": parsed.get("duration_seconds", 0), "total": 0, "flaky": 0,

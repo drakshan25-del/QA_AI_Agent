@@ -22,8 +22,8 @@ FRONTEND_DIR="$ROOT/apps/frontend"
 : "${ENGINE_TOKEN:=dev-engine-token}"
 : "${JWT_ACCESS_SECRET:=dev-access-secret}"
 : "${JWT_REFRESH_SECRET:=dev-refresh-secret}"
-: "${SEED_ADMIN_EMAIL:=admin@example.com}"
-: "${SEED_ADMIN_PASSWORD:=change-me-admin}"
+: "${SEED_ADMIN_EMAIL:=rakshandangol93@gmail.com}"
+: "${SEED_ADMIN_PASSWORD:=In-Silence-2026}"
 : "${QA_OLLAMA_BASE_URL:=http://localhost:11434}"
 : "${QA_LLM_MODEL:=qwen2.5:latest}"
 # Dedicated code model for automation generation. The base coder model is
@@ -37,7 +37,11 @@ FRONTEND_DIR="$ROOT/apps/frontend"
 say()  { printf '\033[1;36m[run-headed]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[run-headed]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Prefix a service's output, compose-style.
+# Prefix a service's output, compose-style. Each service's raw output is also
+# tee'd to logs/<service>.log (fresh per launch) so a failure can be diagnosed
+# after the fact from a single small file.
+LOG_DIR="$ROOT/logs"
+mkdir -p "$LOG_DIR"
 logpipe() { sed -e "s/^/$1| /"; }
 
 wait_http() { # wait_http <name> <url> <tries>
@@ -78,6 +82,25 @@ for port in 4000 5173 8100 8001; do
   fi
 done
 
+# ---- workspace self-heal (host runs use the live working tree) ----
+# Generated page objects import the git-owned framework files below; the
+# backend never sends them with a run, so if they go missing on the host every
+# execution dies at pytest collection. Restore any that are tracked-but-absent
+# (never touch files that merely differ — local edits stay yours).
+FRAMEWORK_FILES=(
+  "apps/qa-engine/automation/__init__.py"
+  "apps/qa-engine/automation/conftest.py"
+  "apps/qa-engine/automation/pages/__init__.py"
+  "apps/qa-engine/automation/pages/base_page.py"
+  "apps/qa-engine/automation/tests/test_smoke_sample_app.py"
+)
+for f in "${FRAMEWORK_FILES[@]}"; do
+  if [ ! -f "$ROOT/$f" ] && git -C "$ROOT" ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+    git -C "$ROOT" checkout -- "$f"
+    say "restored missing framework file from git: $f"
+  fi
+done
+
 # ---- postgres (Docker, same pgdata volume as docker compose) ----
 say "starting postgres in Docker…"
 docker compose -f "$ROOT/docker-compose.yml" up -d postgres
@@ -96,7 +119,8 @@ uv run playwright install chromium >/dev/null
 # ---- sample-app (:8001) ----
 say "starting sample-app on :8001…"
 ( cd "$ENGINE_DIR" && PYTHONUNBUFFERED=1 \
-    uv run python -m uvicorn sample_app.main:app --port 8001 2>&1 | logpipe "sample-app" ) &
+    uv run python -m uvicorn sample_app.main:app --port 8001 2>&1 \
+    | tee "$LOG_DIR/sample-app.log" | logpipe "sample-app" ) &
 wait_http "sample-app" "http://localhost:8001/health"
 
 # ---- engine (:8100) — ON THE HOST, so headed browsers are visible ----
@@ -106,7 +130,8 @@ say "starting engine on :8100 (host — headed executions open real Chrome)…"
     QA_OLLAMA_BASE_URL="$QA_OLLAMA_BASE_URL" QA_LLM_MODEL="$QA_LLM_MODEL" \
     QA_LLM_CODER_MODEL="$QA_LLM_CODER_MODEL" \
     QA_TARGET_BASE_URL="$QA_TARGET_BASE_URL" QA_ALLOWED_DOMAINS="$QA_ALLOWED_DOMAINS" \
-    uv run python -m uvicorn engine.service.main:app --port 8100 2>&1 | logpipe "engine    " ) &
+    uv run python -m uvicorn engine.service.main:app --port 8100 2>&1 \
+    | tee "$LOG_DIR/engine.log" | logpipe "engine    " ) &
 wait_http "engine" "http://localhost:8100/internal/v1/health"
 
 # ---- backend (:4000) — same Postgres DB and secrets as docker compose ----
@@ -120,14 +145,14 @@ say "starting backend on :4000…"
     JWT_ACCESS_SECRET="$JWT_ACCESS_SECRET" JWT_REFRESH_SECRET="$JWT_REFRESH_SECRET" \
     CORS_ORIGIN="http://localhost:5173" \
     SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
-    npm run start:dev 2>&1 | logpipe "backend   " ) &
+    npm run start:dev 2>&1 | tee "$LOG_DIR/backend.log" | logpipe "backend   " ) &
 wait_http "backend" "http://localhost:4000/api/v2/health" 90
 
 # ---- frontend (:5173, Vite dev server) ----
 cd "$FRONTEND_DIR"
 [ -d node_modules ] || { say "installing frontend dependencies…"; npm install; }
 say "starting frontend on :5173…"
-( cd "$FRONTEND_DIR" && npm run dev 2>&1 | logpipe "frontend  " ) &
+( cd "$FRONTEND_DIR" && npm run dev 2>&1 | tee "$LOG_DIR/frontend.log" | logpipe "frontend  " ) &
 wait_http "frontend" "http://localhost:5173" 60
 
 echo
@@ -137,6 +162,8 @@ say "  workspace:  http://localhost:5173  ($SEED_ADMIN_EMAIL / $SEED_ADMIN_PASSW
 say "  backend:    http://localhost:4000/api/v2/health"
 say "  engine:     http://localhost:8100/internal/v1/health"
 say "  sample-app: http://localhost:8001"
+say "  logs:       $LOG_DIR/{engine,backend,frontend,sample-app}.log (fresh per launch)"
+say "  per-run:    apps/qa-engine/artifacts/<runId>/pytest.log"
 say "press Ctrl+C to stop everything"
 say "──────────────────────────────────────────────────────────"
 

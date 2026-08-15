@@ -19,6 +19,7 @@ playwright-report/
 
 # Local dev server logs
 apps/qa-engine/*.log
+logs/
 
 # Build caches
 *.tsbuildinfo

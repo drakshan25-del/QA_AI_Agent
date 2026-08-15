@@ -54,6 +54,10 @@ class BasePage:
         self.page.goto(url)
         emit_step("navigate", target=url, status="passed", current_url=url)
 
+    def navigate(self, path: str | None = None) -> None:
+        """Alias of :meth:`goto` — generated tests use either name."""
+        self.goto(path)
+
     # -- instrumented user actions (FR-EXE-007, FR-V3-EXE-005) ---------------
     # Page objects must perform interactions through these helpers so the
     # live execution timeline shows every click/fill/select, not only
@@ -125,20 +129,26 @@ class BasePage:
             return "element"
 
     # -- accessibility-first locator helpers (FR-AUT-003) --------------------
+    # Each helper forwards its keyword arguments to the underlying Playwright
+    # getter unchanged: a narrower wrapper once turned valid generated code
+    # like ``self.by_role("button", name="Log in", exact=True)`` into a
+    # run-wide ``TypeError: unexpected keyword argument 'exact'``.
 
-    def by_role(self, role: str, name: str | None = None) -> Locator:
-        """Locate by ARIA role, optionally filtered by accessible name."""
-        if name is None:
-            return self.page.get_by_role(role)  # type: ignore[arg-type]
-        return self.page.get_by_role(role, name=name)  # type: ignore[arg-type]
+    def by_role(self, role: str, **kwargs) -> Locator:
+        """Locate by ARIA role (full ``page.get_by_role`` signature)."""
+        return self.page.get_by_role(role, **kwargs)  # type: ignore[arg-type]
 
-    def by_label(self, text: str, *, exact: bool = False) -> Locator:
+    def by_label(self, text: str, **kwargs) -> Locator:
         """Locate a form control by its associated label text."""
-        return self.page.get_by_label(text, exact=exact)
+        return self.page.get_by_label(text, **kwargs)
 
-    def by_placeholder(self, text: str, *, exact: bool = False) -> Locator:
+    def by_placeholder(self, text: str, **kwargs) -> Locator:
         """Locate an input by its placeholder text."""
-        return self.page.get_by_placeholder(text, exact=exact)
+        return self.page.get_by_placeholder(text, **kwargs)
+
+    def by_text(self, text: str, **kwargs) -> Locator:
+        """Locate an element by its visible text content."""
+        return self.page.get_by_text(text, **kwargs)
 
     def by_test_id(self, test_id: str) -> Locator:
         """Locate an element by its ``data-testid`` attribute."""
@@ -149,17 +159,21 @@ class BasePage:
     # ``get_by_*`` names; these thin aliases make that generated code resolve
     # against the same accessibility-first locators, so a page object may use
     # either spelling interchangeably.
-    def get_by_role(self, role: str, name: str | None = None) -> Locator:
+    def get_by_role(self, role: str, **kwargs) -> Locator:
         """Alias of :meth:`by_role`."""
-        return self.by_role(role, name)
+        return self.by_role(role, **kwargs)
 
-    def get_by_label(self, text: str, *, exact: bool = False) -> Locator:
+    def get_by_label(self, text: str, **kwargs) -> Locator:
         """Alias of :meth:`by_label`."""
-        return self.by_label(text, exact=exact)
+        return self.by_label(text, **kwargs)
 
-    def get_by_placeholder(self, text: str, *, exact: bool = False) -> Locator:
+    def get_by_placeholder(self, text: str, **kwargs) -> Locator:
         """Alias of :meth:`by_placeholder`."""
-        return self.by_placeholder(text, exact=exact)
+        return self.by_placeholder(text, **kwargs)
+
+    def get_by_text(self, text: str, **kwargs) -> Locator:
+        """Alias of :meth:`by_text`."""
+        return self.by_text(text, **kwargs)
 
     def get_by_test_id(self, test_id: str) -> Locator:
         """Alias of :meth:`by_test_id`."""
