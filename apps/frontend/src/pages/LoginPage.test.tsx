@@ -8,6 +8,7 @@ const login = vi.fn();
 const refresh = vi.fn();
 const me = vi.fn();
 const logout = vi.fn();
+const register = vi.fn();
 
 vi.mock('../services/api/endpoints', () => ({
   authApi: {
@@ -15,6 +16,7 @@ vi.mock('../services/api/endpoints', () => ({
     refresh: (...a: unknown[]) => refresh(...a),
     me: (...a: unknown[]) => me(...a),
     logout: (...a: unknown[]) => logout(...a),
+    register: (...a: unknown[]) => register(...a),
   },
 }));
 
@@ -79,5 +81,66 @@ describe('LoginPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid email or password');
     // Still on the login form (no navigation away).
     expect(screen.getByLabelText('Email')).toBeInTheDocument();
+  });
+
+  it('registers a new account and signs in automatically', async () => {
+    register.mockResolvedValue({
+      id: 'u2',
+      email: 'new@example.com',
+      role: 'qa_engineer',
+      name: 'New User',
+      isActive: true,
+    });
+    login.mockResolvedValue({
+      accessToken: 'tok',
+      user: { id: 'u2', email: 'new@example.com', role: 'qa_engineer', name: 'New User' },
+    });
+    const user = userEvent.setup();
+    renderLogin();
+
+    await user.click(await screen.findByRole('button', { name: 'Create an account' }));
+    await user.type(screen.getByLabelText('Name'), 'New User');
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
+    await user.type(screen.getByLabelText('Confirm password'), 'secret123');
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() =>
+      expect(register).toHaveBeenCalledWith({
+        email: 'new@example.com',
+        password: 'secret123',
+        role: 'qa_engineer',
+        name: 'New User',
+      }),
+    );
+    await waitFor(() => expect(login).toHaveBeenCalledWith('new@example.com', 'secret123'));
+    expect(await screen.findByText('Dashboard landing')).toBeInTheDocument();
+  });
+
+  it('blocks sign-up when the passwords do not match', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    await user.click(await screen.findByRole('button', { name: 'Create an account' }));
+    await user.type(screen.getByLabelText('Email'), 'new@example.com');
+    await user.type(screen.getByLabelText('Password'), 'secret123');
+    await user.type(screen.getByLabelText('Confirm password'), 'different');
+    await user.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Passwords do not match');
+    expect(register).not.toHaveBeenCalled();
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it('can switch back to the sign-in form', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    await user.click(await screen.findByRole('button', { name: 'Create an account' }));
+    expect(screen.getByLabelText('Confirm password')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(screen.queryByLabelText('Confirm password')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 });

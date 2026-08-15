@@ -58,8 +58,25 @@ def client(monkeypatch):
         store.FLASH_KINDS.clear()
 
 
+#: Marks a request as a top-level browser form submit: POST /login keeps the
+#: HTML redirect flow for these and answers API clients with JSON.
+BROWSER_FORM = {"Sec-Fetch-Mode": "navigate"}
+
+
 def _login_admin_html(client: TestClient):
-    return client.post("/login", data={"username": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    return client.post(
+        "/login",
+        data={"username": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        headers=BROWSER_FORM,
+    )
+
+
+def _login_user_html(client: TestClient):
+    return client.post(
+        "/login",
+        data={"username": USER_EMAIL, "password": USER_PASSWORD},
+        headers=BROWSER_FORM,
+    )
 
 
 def _admin_headers(client: TestClient) -> dict[str, str]:
@@ -91,7 +108,7 @@ class TestLoginRedirect:
         assert "Welcome" in response.text
 
     def test_regular_user_still_lands_on_items(self, client):
-        response = client.post("/login", data={"username": USER_EMAIL, "password": USER_PASSWORD})
+        response = _login_user_html(client)
         assert str(response.url).endswith("/items")
         assert "Welcome" in response.text
 
@@ -122,7 +139,7 @@ class TestAuthorization:
             assert str(response.url).endswith("/login"), path
 
     def test_regular_user_is_turned_away_from_admin_pages(self, client):
-        client.post("/login", data={"username": USER_EMAIL, "password": USER_PASSWORD})
+        _login_user_html(client)
         response = client.get("/dashboard")
         assert str(response.url).endswith("/items")
         assert "not authorized" in response.text.lower()
@@ -429,14 +446,14 @@ class TestProductHtml:
 
 class TestLegacySurfaceIntact:
     def test_items_page_selector_contract_untouched(self, client):
-        client.post("/login", data={"username": USER_EMAIL, "password": USER_PASSWORD})
+        _login_user_html(client)
         page = client.get("/items").text
         assert 'data-testid="item"' in page
         assert 'data-testid="new-item"' in page
         assert ">Add</button>" in page and ">Delete</button>" in page
 
     def test_regular_user_nav_has_no_admin_links(self, client):
-        client.post("/login", data={"username": USER_EMAIL, "password": USER_PASSWORD})
+        _login_user_html(client)
         page = client.get("/items").text
         assert 'href="/dashboard"' not in page
         assert 'href="/products"' not in page

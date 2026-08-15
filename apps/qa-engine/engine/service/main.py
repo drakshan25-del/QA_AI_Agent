@@ -31,7 +31,13 @@ from agents import (
     test_case_agent,
     test_plan_agent,
 )
-from app.core.llm import OllamaUnavailableError, check_ollama_health
+from app.core.llm import (
+    CloudLLMConfigError,
+    OllamaUnavailableError,
+    check_ollama_health,
+    llm_runtime,
+    runtime_from_payload,
+)
 from app.models.schemas import (
     AutomationOutput,
     FailureClassificationOutput,
@@ -179,12 +185,17 @@ def analyse(body: dict = Body(...), x_engine_token: str | None = Header(default=
     if cached:
         return RequirementAnalysisOutput.model_validate(cached)
     try:
-        out = requirement_agent.analyse_requirement(
-            body["text"], body.get("acceptanceCriteria", []),
-            requirement_id=body.get("requirementId", ""),
-            model=body.get("model"), temperature=body.get("temperature"))
+        with llm_runtime(runtime_from_payload(body.get("llm"))):
+            out = requirement_agent.analyse_requirement(
+                body["text"], body.get("acceptanceCriteria", []),
+                requirement_id=body.get("requirementId", ""),
+                model=body.get("model"), temperature=body.get("temperature"))
+    except CloudLLMConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
     return out
 
@@ -197,11 +208,16 @@ def test_plan(body: dict = Body(...), x_engine_token: str | None = Header(defaul
     if cached:
         return TestPlanOutput.model_validate(cached)
     try:
-        out = test_plan_agent.generate_test_plan(
-            body["projectName"], body.get("baseUrl", ""), body.get("requirements", []),
-            body.get("analyses", []), model=body.get("model"), temperature=body.get("temperature"))
+        with llm_runtime(runtime_from_payload(body.get("llm"))):
+            out = test_plan_agent.generate_test_plan(
+                body["projectName"], body.get("baseUrl", ""), body.get("requirements", []),
+                body.get("analyses", []), model=body.get("model"), temperature=body.get("temperature"))
+    except CloudLLMConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
     return out
 
@@ -214,11 +230,16 @@ def test_cases(body: dict = Body(...), x_engine_token: str | None = Header(defau
     if cached:
         return TestCasesOutput.model_validate(cached)
     try:
-        out = test_case_agent.generate_test_cases(
-            body["requirement"], body.get("analysis"), min_cases=body.get("minCases", 10),
-            model=body.get("model"), temperature=body.get("temperature"))
+        with llm_runtime(runtime_from_payload(body.get("llm"))):
+            out = test_case_agent.generate_test_cases(
+                body["requirement"], body.get("analysis"), min_cases=body.get("minCases", 10),
+                model=body.get("model"), temperature=body.get("temperature"))
+    except CloudLLMConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
     return out
 
@@ -231,16 +252,21 @@ def automation(body: dict = Body(...), x_engine_token: str | None = Header(defau
     if cached:
         return AutomationOutput.model_validate(cached)
     try:
-        out = automation_agent.generate_automation(
-            body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""),
-            model=body.get("model"), temperature=body.get("temperature"),
-            test_type=body.get("testType", "ui"),
-            extra_markers=body.get("extraMarkers"),
-            api_summary=body.get("apiSummary", ""))
+        with llm_runtime(runtime_from_payload(body.get("llm"))):
+            out = automation_agent.generate_automation(
+                body["testCases"], body.get("baseUrl", ""), body.get("pageObjectsSummary", ""),
+                model=body.get("model"), temperature=body.get("temperature"),
+                test_type=body.get("testType", "ui"),
+                extra_markers=body.get("extraMarkers"),
+                api_summary=body.get("apiSummary", ""))
+    except CloudLLMConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
     _remember(idempotency_key, out.model_dump())
     return out
 
@@ -312,9 +338,14 @@ def regression_compare(body: dict = Body(...), x_engine_token: str | None = Head
 def classify(body: dict = Body(...), x_engine_token: str | None = Header(default=None)) -> FailureClassificationOutput:
     _auth(x_engine_token)
     try:
-        return result_analysis_agent.classify_failure(body["test"], body.get("context", {}))
+        with llm_runtime(runtime_from_payload(body.get("llm"))):
+            return result_analysis_agent.classify_failure(body["test"], body.get("context", {}))
+    except CloudLLMConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
 
 
 @app.post("/internal/v1/render-pdf")
@@ -358,7 +389,8 @@ def report(body: dict = Body(...), x_engine_token: str | None = Header(default=N
     data = to_report_data(body["data"])
     if "ai_narrative" not in data:
         try:
-            summary = report_agent.summarise_run(data.get("run_summary", data))
+            with llm_runtime(runtime_from_payload(body.get("llm"))):
+                summary = report_agent.summarise_run(data.get("run_summary", data))
             data["ai_narrative"] = {"label": "AI-generated narrative", "text": summary}
         except Exception:  # noqa: BLE001 - deterministic fallback (NFR-REL-001)
             data["ai_narrative"] = {"label": "auto-generated (no LLM)", "text": "Narrative unavailable."}
@@ -399,6 +431,7 @@ def execute(body: dict = Body(...), x_engine_token: str | None = Header(default=
             browser=body.get("browser", "chromium"), headed=body.get("headed", False),
             environment=body.get("environment", "local"),
             target_base_url=body.get("targetBaseUrl", ""),
+            target_api_base_url=body.get("targetApiBaseUrl", ""),
             allowed_domains=allowed_domains,
             markers=body.get("markers", ""),
             # V3 runtime settings (FR-V3-EXE-011)

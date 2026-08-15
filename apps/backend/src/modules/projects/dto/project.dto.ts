@@ -3,13 +3,55 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   Max,
   Min,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ROLES, Role, Runner } from '../../../common/enums';
+import {
+  CLOUD_PROVIDER_IDS,
+  LLM_TYPES,
+  LlmType,
+} from '../../../common/llm/providers';
 
-export class CreateProjectDto {
+/** Cloud/local LLM configuration fields shared by create + update. */
+abstract class LlmConfigFields {
+  @ApiPropertyOptional({ enum: LLM_TYPES, default: 'LOCAL' })
+  @IsOptional()
+  @IsIn(LLM_TYPES as unknown as string[])
+  llmType?: LlmType;
+
+  @ApiPropertyOptional({ enum: CLOUD_PROVIDER_IDS })
+  @IsOptional()
+  @IsIn(CLOUD_PROVIDER_IDS)
+  cloudProvider?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  cloudModel?: string;
+
+  /** Write-only: sealed server-side, never returned by any endpoint. */
+  @ApiPropertyOptional({ writeOnly: true })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  cloudApiKey?: string;
+
+  @ApiPropertyOptional({ description: 'OpenAI-compatible endpoint override' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Matches(/^$|^https?:\/\//, {
+    message: 'cloudBaseUrl must be an http(s) URL',
+  })
+  cloudBaseUrl?: string;
+}
+
+export class CreateProjectDto extends LlmConfigFields {
   @ApiProperty()
   @IsString()
   name!: string;
@@ -23,6 +65,17 @@ export class CreateProjectDto {
   @IsOptional()
   @IsString()
   baseUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'API base URL when it differs from baseUrl (host/port/prefix); empty = baseUrl',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^$|^https?:\/\//, {
+    message: 'apiBaseUrl must be an http(s) URL',
+  })
+  apiBaseUrl?: string;
 
   @ApiPropertyOptional({ description: 'CSV allow-list (SEC-003)' })
   @IsOptional()
@@ -66,7 +119,7 @@ export class CreateProjectDto {
   tcZeroPad?: number;
 }
 
-export class UpdateProjectDto {
+export class UpdateProjectDto extends LlmConfigFields {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
@@ -81,6 +134,17 @@ export class UpdateProjectDto {
   @IsOptional()
   @IsString()
   baseUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'API base URL when it differs from baseUrl (host/port/prefix); empty = baseUrl',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^$|^https?:\/\//, {
+    message: 'apiBaseUrl must be an http(s) URL',
+  })
+  apiBaseUrl?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

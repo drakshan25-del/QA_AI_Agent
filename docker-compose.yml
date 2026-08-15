@@ -71,8 +71,8 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret}
       CORS_ORIGIN: http://localhost:5173
-      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
-      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-change-me-admin}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-rakshandangol93@gmail.com}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-In-Silence-2026}
       UPLOAD_DIR: /app/evidence
       # Shared volume with the engine so the evidence retention sweep works.
       ARTIFACTS_DIR: /app/artifacts

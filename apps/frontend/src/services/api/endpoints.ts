@@ -23,6 +23,7 @@ import type {
   TestPlanRevision,
   Finding,
   GeneratedArtifact,
+  GitPushResult,
   HealthStatus,
   Job,
   JobAccepted,
@@ -70,6 +71,23 @@ export const authApi = {
   },
   async me(): Promise<PublicUser> {
     const { data } = await http.get<PublicUser>('/auth/me');
+    return data;
+  },
+};
+
+// ---- Users (superowner account administration) -----------------------------
+
+export const usersApi = {
+  /** All accounts — superowner only. */
+  async list(): Promise<PublicUser[]> {
+    const { data } = await http.get<PublicUser[]>('/users');
+    return data;
+  },
+  /** Enable/disable an account — superowner only. */
+  async setStatus(id: string, isActive: boolean): Promise<PublicUser> {
+    const { data } = await http.patch<PublicUser>(`/users/${id}/status`, {
+      isActive,
+    });
     return data;
   },
 };
@@ -600,6 +618,26 @@ export const notificationsApi = {
   },
   async markAllRead(): Promise<{ updated: number }> {
     const { data } = await http.post<{ updated: number }>('/notifications/read-all', {});
+    return data;
+  },
+};
+
+// ---- Git push (FR-GIT-*) -----------------------------------------------------
+
+export const gitApi = {
+  /**
+   * Push the project's approved+validated automation to its GitHub repo's
+   * main branch. The backend selects the file set; 400s carry actionable
+   * codes (repo_not_configured / github_token_missing).
+   */
+  async push(
+    projectId: string,
+    input?: { message?: string },
+  ): Promise<GitPushResult> {
+    const { data } = await http.post<GitPushResult>(
+      `/projects/${projectId}/git/push`,
+      input ?? {},
+    );
     return data;
   },
 };

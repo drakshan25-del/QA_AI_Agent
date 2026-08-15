@@ -31,9 +31,11 @@ _T0 = {"t": time.time()}
 
 _SECRET_HINTS = ("password", "passwd", "secret", "token", "credential", "pwd")
 
-#: Action types whose ``value`` carries diagnostic text (a failure reason)
-#: rather than user input, so it is summarised instead of dropped.
-_DIAGNOSTIC_ACTIONS = ("test", "error")
+#: Action types whose ``value`` carries diagnostic text (a failure reason or
+#: an HTTP status line) rather than user input, so it is summarised instead of
+#: dropped. ``api`` events are emitted per request by the ``api_client``
+#: fixture; their value is only ever "HTTP <status> <reason>", never a payload.
+_DIAGNOSTIC_ACTIONS = ("test", "error", "api")
 
 #: Chromium's error text for a request the SEC-003 domain allow-list guard
 #: aborted (``route.abort("blockedbyclient")`` in ``automation/conftest.py``).
@@ -195,14 +197,33 @@ def _crash_reason(report) -> str:
     return lines[0][:200] if lines else ""
 
 
+def _skip_reason(report) -> str:
+    """Why a test was skipped (e.g. 'target app not running').
+
+    pytest's skip longrepr is a ``(path, lineno, "Skipped: <reason>")``
+    tuple; without the reason an all-skipped run reads as a mystery in the
+    live log (NFR-USA-002).
+    """
+    longrepr = getattr(report, "longrepr", None)
+    if isinstance(longrepr, tuple) and len(longrepr) == 3:
+        reason = str(longrepr[2])
+        return reason.removeprefix("Skipped: ")[:200]
+    return ""
+
+
 def pytest_runtest_logreport(report):  # noqa: D401
     if report.when != "call" and not (report.when == "setup" and report.skipped):
         return
     status = "passed" if report.passed else "skipped" if report.skipped else "failed"
+    value = ""
+    if status == "failed":
+        value = _crash_reason(report)
+    elif status == "skipped":
+        value = _skip_reason(report)
     emit_step(
         "test",
         target=report.nodeid,
-        value=_crash_reason(report) if status == "failed" else "",
+        value=value,
         status=status,
         test_name=report.nodeid,
     )

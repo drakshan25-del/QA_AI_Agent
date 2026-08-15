@@ -20,6 +20,7 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 import { ApprovalDecision } from '../../common/enums';
 import { GenerateTestPlanDto, UpdateTestPlanDto } from './dto/test-plan.dto';
 
@@ -50,6 +51,7 @@ export class TestPlansService {
     private readonly approvals: ApprovalsService,
     private readonly derivation: RequirementDerivationService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {
     // Retry recreates the generation from the stored inputRefs (FR-V3-LOG-009).
     this.jobs.registerRetryHandler('test_plan', (original, user, correlationId) =>
@@ -107,6 +109,11 @@ export class TestPlansService {
     });
 
     this.jobs.dispatch(job, async (j, ctx) => {
+      const llm = await this.llm.engineLlmFor(projectId);
+      const llmLabel =
+        llm.type === 'cloud'
+          ? `${llm.provider}:${llm.model}`
+          : llm.model || 'the default model';
       await ctx.log({
         stage: 'requirement mapping',
         message: `Mapping ${requirements.length} requirement(s) and ${analyses.length} analysis result(s) into the plan scope`,
@@ -116,7 +123,7 @@ export class TestPlansService {
 
       await ctx.log({
         stage: 'scope generation',
-        message: `Generating plan sections with ${project.llmModel || 'the default model'} (objectives, scope, environments, entry/exit criteria)`,
+        message: `Generating plan sections with ${llmLabel} (objectives, scope, environments, entry/exit criteria)`,
         progress: 25,
       });
       const output = await this.engine.testPlan(
@@ -130,8 +137,9 @@ export class TestPlansService {
             acceptance_criteria: r.acceptanceCriteria ?? [],
           })),
           analyses: analyses.map((a) => a.output),
-          model: project.llmModel || undefined,
+          model: llm.type === 'local' ? llm.model : undefined,
           temperature: project.llmTemperature,
+          llm,
         },
         correlationId,
         idempotencyKey,
@@ -148,7 +156,7 @@ export class TestPlansService {
           projectId,
           kind: 'test_plan',
           jobId: job.id,
-          model: project.llmModel,
+          model: llm.model ?? '',
           temperature: project.llmTemperature,
           contentHash: contentHash(output),
           status: 'completed',
@@ -170,7 +178,7 @@ export class TestPlansService {
           schemaVersion: (output.schema_version as string) || 'v1',
           contentHash: contentHash(output),
           sections: output,
-          model: project.llmModel,
+          model: llm.model ?? '',
           createdBy: user.id,
         }),
       );

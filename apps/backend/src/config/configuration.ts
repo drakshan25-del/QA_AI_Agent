@@ -20,6 +20,12 @@ export interface AppConfig {
     email: string;
     password: string;
   };
+  /** Platform owner: the one account allowed to enable/disable other accounts. */
+  superowner: {
+    email: string;
+  };
+  /** Key material for sealing stored secrets (cloud LLM API keys, SEC-002). */
+  secretsKey: string;
   engine: {
     url: string;
     token: string;
@@ -72,6 +78,12 @@ export default (): AppConfig => ({
     email: process.env.SEED_ADMIN_EMAIL || '',
     password: process.env.SEED_ADMIN_PASSWORD || '',
   },
+  superowner: {
+    email: (process.env.SUPEROWNER_EMAIL || 'rakshandangol93@gmail.com')
+      .toLowerCase()
+      .trim(),
+  },
+  secretsKey: process.env.SECRETS_ENCRYPTION_KEY || '',
   engine: {
     url: process.env.ENGINE_URL || 'http://localhost:8100',
     token: process.env.ENGINE_TOKEN || '',

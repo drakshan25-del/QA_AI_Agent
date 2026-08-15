@@ -114,23 +114,83 @@ def login_page() -> HTMLResponse:
     return render_login()
 
 
-@app.post("/login", response_class=HTMLResponse, response_model=None)
-def login_submit(username: str = Form(""), password: str = Form("")) -> HTMLResponse | RedirectResponse:
-    """Handle a login attempt.
+def _is_browser_navigation(request: Request) -> bool:
+    """True for a real browser form submit (which keeps the redirect flow).
 
-    An active admin account is redirected to /dashboard (Feature 1); the
-    regular env user keeps the original /items redirect. Both get a
-    'Welcome' flash. Failure re-renders the form with an error flash.
-
-    Seeded defect 'login_message' (SRS §15.2): the failure flash reads
-    'Server error' instead of 'Invalid credentials'.
+    Browsers mark top-level form posts with ``Sec-Fetch-Mode: navigate``;
+    API clients (curl, httpx, Swagger UI's fetch) either omit ``Sec-Fetch-*``
+    entirely or send ``cors``. Engines that predate ``Sec-Fetch-*`` are
+    recognised by their Mozilla user agent.
     """
+    mode = request.headers.get("sec-fetch-mode")
+    if mode is not None:
+        return mode == "navigate"
+    return request.headers.get("user-agent", "").startswith("Mozilla/")
+
+
+def _login_success_envelope(token: str, *, user_id: str, email: str, name: str, role: str) -> dict:
+    """Rich JSON login envelope for API clients (documented login contract)."""
+    first, _, last = (name or email.split("@", 1)[0]).partition(" ")
+    return {
+        "status": "success",
+        "message": "Login successful",
+        "data": {
+            "user": {
+                "id": user_id,
+                "email": email,
+                "firstName": first,
+                "lastName": last,
+                "role": role,
+            },
+            "authentication": {
+                "tokenType": "Bearer",
+                "accessToken": token,
+                "expiresInSeconds": 3600,
+                "refreshToken": "rfr_" + secrets.token_urlsafe(18),
+            },
+        },
+    }
+
+
+@app.post("/login", response_class=HTMLResponse, response_model=None)
+def login_submit(
+    request: Request, username: str = Form(""), password: str = Form("")
+) -> HTMLResponse | RedirectResponse | JSONResponse:
+    """Handle a login attempt from the browser form or an API client.
+
+    Browser navigations keep the original flow: an active admin is redirected
+    to /dashboard (Feature 1), the regular env user to /items, both with a
+    'Welcome' flash; failure re-renders the form. Non-navigation clients
+    (curl, Swagger UI, httpx) get JSON instead of a redirect: 200 with
+    ``{status, message, data: {user, authentication}}`` on success, 401 with
+    ``{status: "error", message}`` on bad credentials. The issued access
+    token is the same session token the cookie flow uses, so ``Bearer``
+    calls against /api/* work immediately.
+
+    Seeded defect 'login_message' (SRS §15.2): the failure message reads
+    'Server error' instead of 'Invalid credentials' on both surfaces (the
+    JSON twin also degrades 401 → 500, mirroring /api/login).
+    """
+    browser = _is_browser_navigation(request)
     admin = store.verify_admin_login(username, password)
     if admin is not None:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = admin["email"]
-        store.set_flash(token, "Welcome", "success")
-        response = RedirectResponse(url="/dashboard", status_code=303)
+        if browser:
+            store.set_flash(token, "Welcome", "success")
+            response: RedirectResponse | JSONResponse = RedirectResponse(
+                url="/dashboard", status_code=303
+            )
+        else:
+            response = JSONResponse(
+                _login_success_envelope(
+                    token,
+                    user_id=f"usr_{admin['id']}",
+                    email=admin["email"],
+                    name=str(admin.get("name", "")),
+                    role=str(admin.get("role", "admin")),
+                )
+            )
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
 
@@ -138,13 +198,25 @@ def login_submit(username: str = Form(""), password: str = Form("")) -> HTMLResp
     if username == valid_user and password == valid_pass:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = username
-        store.set_flash(token, "Welcome", "success")
-        response = RedirectResponse(url="/items", status_code=303)
+        if browser:
+            store.set_flash(token, "Welcome", "success")
+            response = RedirectResponse(url="/items", status_code=303)
+        else:
+            response = JSONResponse(
+                _login_success_envelope(
+                    token, user_id="usr_env", email=username, name="", role="user"
+                )
+            )
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
 
     message = "Server error" if "login_message" in defects() else "Invalid credentials"
-    return render_login(flash=message)
+    if browser:
+        return render_login(flash=message)
+    return JSONResponse(
+        {"status": "error", "message": message},
+        status_code=500 if "login_message" in defects() else 401,
+    )
 
 
 @app.post("/logout")
@@ -234,10 +306,12 @@ def api_health() -> dict[str, str]:
 
 @app.post("/api/login")
 def api_login(payload: LoginPayload) -> JSONResponse:
-    """JSON login: 200 + token (+role) on success, 401 on bad credentials.
+    """JSON login: 200 + success message, token and role; 401 on bad credentials.
 
-    Admin accounts get role 'admin'; the regular env user gets role 'user'
-    (additive key — the original status/token contract is unchanged).
+    The 200 body carries a human-readable ``message`` ("Welcome" — the same
+    text the HTML flash shows) alongside the machine keys. Admin accounts get
+    role 'admin'; the regular env user gets role 'user' (additive keys — the
+    original status/token contract is unchanged).
 
     Seeded defect 'login_message' (SRS §15.2): failures surface as a
     misleading 500 'server_error' instead of 401 'invalid_credentials' —
@@ -247,7 +321,9 @@ def api_login(payload: LoginPayload) -> JSONResponse:
     if admin is not None:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = admin["email"]
-        response = JSONResponse({"status": "ok", "token": token, "role": "admin"})
+        response = JSONResponse(
+            {"status": "ok", "message": "Welcome", "token": token, "role": "admin"}
+        )
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
 
@@ -255,7 +331,9 @@ def api_login(payload: LoginPayload) -> JSONResponse:
     if payload.username == valid_user and payload.password == valid_pass:
         token = secrets.token_urlsafe(24)
         SESSIONS[token] = payload.username
-        response = JSONResponse({"status": "ok", "token": token, "role": "user"})
+        response = JSONResponse(
+            {"status": "ok", "message": "Welcome", "token": token, "role": "user"}
+        )
         response.set_cookie(SESSION_COOKIE, token, httponly=True)
         return response
     if "login_message" in defects():

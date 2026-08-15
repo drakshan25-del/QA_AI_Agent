@@ -1,7 +1,7 @@
 import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { GitService } from './git.service';
-import { GitCommitDto } from './dto/git.dto';
+import { GitCommitDto, GitPushDto } from './dto/git.dto';
 import {
   AuthUser,
   CorrelationId,
@@ -29,5 +29,18 @@ export class GitController {
     @CorrelationId() correlationId: string,
   ) {
     return this.git.commit(projectId, dto, user, correlationId);
+  }
+
+  @Post('projects/:projectId/git/push')
+  @RequirePermission('git.push')
+  @UseGuards(ProjectMemberGuard, RolesGuard)
+  @Roles('automation_engineer', 'devops', 'supervisor', 'admin')
+  async push(
+    @Param('projectId') projectId: string,
+    @Body() dto: GitPushDto,
+    @CurrentUser() user: AuthUser,
+    @CorrelationId() correlationId: string,
+  ) {
+    return this.git.push(projectId, dto, user, correlationId);
   }
 }

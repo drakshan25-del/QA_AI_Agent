@@ -14,6 +14,7 @@ import { JobsService } from '../jobs/jobs.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 import { CreateAnalysisJobDto } from './dto/analysis.dto';
 
 @Injectable()
@@ -31,6 +32,7 @@ export class AnalysisService {
     private readonly jobs: JobsService,
     private readonly derivation: RequirementDerivationService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {
     this.jobs.registerRetryHandler('analysis', (original, user, correlationId) =>
       this.createJob(
@@ -97,13 +99,20 @@ export class AnalysisService {
     });
 
     this.jobs.dispatch(job, async (j, ctx) => {
+      // Per-project LLM routing (LOCAL/Ollama vs CLOUD) — resolved fresh on
+      // every dispatch so retries pick up configuration changes.
+      const llm = await this.llm.engineLlmFor(projectId);
+      const llmLabel =
+        llm.type === 'cloud'
+          ? `${llm.provider}:${llm.model}`
+          : llm.model || 'the default model';
       const run = await this.runs.save(
         this.runs.create({
           projectId,
           kind: 'analysis',
           jobId: job.id,
           inputRefs: { requirementIds: requirements.map((r) => r.id) },
-          model: project.llmModel,
+          model: llm.model ?? '',
           temperature: project.llmTemperature,
           status: 'completed',
         }),
@@ -111,7 +120,7 @@ export class AnalysisService {
 
       await ctx.log({
         stage: 'document parsing',
-        message: `Analysing ${requirements.length} requirement(s) with ${project.llmModel || 'the default model'}`,
+        message: `Analysing ${requirements.length} requirement(s) with ${llmLabel}`,
         progress: 8,
       });
 
@@ -130,8 +139,9 @@ export class AnalysisService {
             requirementId: req.id,
             text: req.text,
             acceptanceCriteria: req.acceptanceCriteria ?? [],
-            model: project.llmModel || undefined,
+            model: llm.type === 'local' ? llm.model : undefined,
             temperature: project.llmTemperature,
+            llm,
           },
           correlationId,
           `${idempotencyKey || job.id}:${req.id}`,
@@ -146,7 +156,7 @@ export class AnalysisService {
             contentHash: contentHash(output),
             riskScore: risk.score ?? 5,
             output,
-            model: project.llmModel,
+            model: llm.model ?? '',
             temperature: project.llmTemperature,
             createdBy: user.id,
           }),

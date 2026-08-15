@@ -6,6 +6,7 @@ import { AppConfig } from '../config/configuration';
 import { CORRELATION_HEADER } from '../common/correlation';
 import { EngineException } from '../common/errors';
 import { redact } from '../common/redact';
+import { EngineLlmConfig } from '../common/llm/llm-runtime.service';
 
 /** One parsed SSE event from the engine run stream. */
 export interface EngineSseEvent {
@@ -115,6 +116,7 @@ export class EngineClient {
       acceptanceCriteria?: string[];
       model?: string;
       temperature?: number;
+      llm?: EngineLlmConfig;
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -130,6 +132,7 @@ export class EngineClient {
       analyses?: unknown[];
       model?: string;
       temperature?: number;
+      llm?: EngineLlmConfig;
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -144,6 +147,7 @@ export class EngineClient {
       minCases?: number;
       model?: string;
       temperature?: number;
+      llm?: EngineLlmConfig;
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -160,6 +164,10 @@ export class EngineClient {
       temperature?: number;
       testType?: string;
       extraMarkers?: string[];
+      /** Authoritative API surface (parsed api_doc uploads + requirement
+       * text) grounding endpoint generation for testType 'api'. */
+      apiSummary?: string;
+      llm?: EngineLlmConfig;
     },
     correlationId?: string,
     idempotencyKey?: string,
@@ -201,14 +209,20 @@ export class EngineClient {
 
   // --- classification / report --------------------------------------------
   async classify(
-    body: { test: unknown; context?: unknown; model?: string; temperature?: number },
+    body: {
+      test: unknown;
+      context?: unknown;
+      model?: string;
+      temperature?: number;
+      llm?: EngineLlmConfig;
+    },
     correlationId?: string,
   ): Promise<Record<string, unknown>> {
     return this.post('/classify', body, correlationId);
   }
 
   async report(
-    body: { data: Record<string, unknown> },
+    body: { data: Record<string, unknown>; llm?: EngineLlmConfig },
     correlationId?: string,
   ): Promise<Record<string, unknown>> {
     return this.post('/report', body, correlationId);
@@ -228,6 +242,8 @@ export class EngineClient {
       environment?: string;
       allowedDomains?: string;
       targetBaseUrl?: string;
+      /** API host for generated API tests (falls back to targetBaseUrl). */
+      targetApiBaseUrl?: string;
       markers?: string;
       // V3 runtime settings (FR-V3-EXE-011)
       timeoutSeconds?: number;

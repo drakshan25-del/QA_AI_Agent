@@ -21,6 +21,7 @@ import { MembershipService } from '../../common/access/membership.service';
 import { RequirementDerivationService } from '../requirements/requirement-derivation.service';
 import { SequencesService } from '../sequences/sequences.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 import { GenerateTestCasesDto, UpdateTestCaseDto } from './dto/test-case.dto';
 
 export interface TestCaseFilter {
@@ -60,6 +61,7 @@ export class TestCasesService implements OnModuleInit {
     private readonly derivation: RequirementDerivationService,
     private readonly sequences: SequencesService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {
     this.jobs.registerRetryHandler('test_cases', (original, user, correlationId) =>
       this.generate(
@@ -159,12 +161,17 @@ export class TestCasesService implements OnModuleInit {
     });
 
     this.jobs.dispatch(job, async (j, ctx) => {
+      const llm = await this.llm.engineLlmFor(projectId);
+      const llmLabel =
+        llm.type === 'cloud'
+          ? `${llm.provider}:${llm.model}`
+          : llm.model || 'the default model';
       const run = await this.runs.save(
         this.runs.create({
           projectId,
           kind: 'test_cases',
           jobId: job.id,
-          model: project.llmModel,
+          model: llm.model ?? '',
           temperature: project.llmTemperature,
           status: 'completed',
         }),
@@ -172,7 +179,7 @@ export class TestCasesService implements OnModuleInit {
 
       await ctx.log({
         stage: 'scenario discovery',
-        message: `Generating test cases for ${requirements.length} requirement(s) with ${project.llmModel || 'the default model'}`,
+        message: `Generating test cases for ${requirements.length} requirement(s) with ${llmLabel}`,
         progress: 8,
       });
 
@@ -202,8 +209,9 @@ export class TestCasesService implements OnModuleInit {
             },
             analysis: analysis?.output,
             minCases: dto.minCases ?? 10,
-            model: project.llmModel || undefined,
+            model: llm.type === 'local' ? llm.model : undefined,
             temperature: project.llmTemperature,
+            llm,
           },
           correlationId,
           `${idempotencyKey || job.id}:${req.id}`,

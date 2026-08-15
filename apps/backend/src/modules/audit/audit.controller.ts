@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { isAdminRole } from '../../common/access/permissions';
 import { AuthUser, CurrentUser } from '../../common/decorators';
 import { ForbiddenAppException } from '../../common/errors';
 
@@ -33,7 +34,7 @@ export class AuditController {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
-    if (user.role !== 'admin') {
+    if (!isAdminRole(user.role)) {
       if (!projectId) {
         throw new ForbiddenAppException(
           'Non-admin audit queries must be scoped with ?projectId=<project you belong to>',

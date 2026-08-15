@@ -8,6 +8,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { DatabaseModule } from './database/database.module';
 import { EngineModule } from './engine/engine.module';
 import { AccessModule } from './common/access/access.module';
+import { LlmModule } from './common/llm/llm.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { EventsModule } from './modules/events/events.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -16,6 +17,7 @@ import { RetentionModule } from './modules/retention/retention.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { RequirementsModule } from './modules/requirements/requirements.module';
@@ -44,6 +46,7 @@ import { HealthModule } from './modules/health/health.module';
     // Global infrastructure (engine client, access, audit, events, jobs, approvals)
     EngineModule,
     AccessModule,
+    LlmModule,
     AuditModule,
     EventsModule,
     NotificationsModule,
@@ -53,6 +56,7 @@ import { HealthModule } from './modules/health/health.module';
     ApprovalsModule,
     // Feature modules (Appendix A)
     AuthModule,
+    UsersModule,
     ProjectsModule,
     DocumentsModule,
     RequirementsModule,

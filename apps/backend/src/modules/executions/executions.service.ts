@@ -79,6 +79,49 @@ export interface EffectiveSettings {
 /** Characters allowed in a pytest -m expression: names, and/or/not, parentheses. */
 const MARKER_EXPRESSION_RE = /^[A-Za-z0-9_()\s]*$/;
 
+/**
+ * Framework-owned automation files a run submission must never materialise:
+ * the engine's instrumented BasePage and pytest infrastructure always exist
+ * in the runner workspace. A generated `base_page.py` artifact once shadowed
+ * the real BasePage and broke every UI test with AttributeErrors — the engine
+ * refuses such overwrites too; filtering here keeps even legacy approved
+ * artifacts with these names out of the run payload (AIQA-EXEC-003).
+ */
+export const RESERVED_AUTOMATION_BASENAMES = new Set([
+  'base_page.py',
+  '__init__.py',
+  'conftest.py',
+]);
+
+/**
+ * Merge the hosts of the project's configured target URLs into its domain
+ * allow-list (SEC-003). Explicitly configuring a target base URL is itself the
+ * authorization to reach that host — without this, a project whose API lives
+ * on a host missing from `allowedDomains` fails every request with a guard
+ * refusal instead of running the test.
+ */
+export function allowedDomainsWithTargets(
+  allowedDomains: string,
+  ...targetUrls: (string | undefined)[]
+): string {
+  const domains = allowedDomains
+    .split(',')
+    .map((d) => d.trim())
+    .filter(Boolean);
+  for (const url of targetUrls) {
+    if (!url) continue;
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (host && !domains.some((d) => d.toLowerCase() === host)) {
+        domains.push(host);
+      }
+    } catch {
+      // Malformed URL: nothing to allow-list; the run surfaces the real error.
+    }
+  }
+  return domains.join(',');
+}
+
 @Injectable()
 export class ExecutionsService {
   private readonly logger = new Logger(ExecutionsService.name);
@@ -546,6 +589,8 @@ export class ExecutionsService {
       const byPath = new Map<string, string>();
       const addArts = (arts: GeneratedArtifact[]) => {
         for (const a of arts) {
+          const basename = (a.path || '').split('/').pop() || '';
+          if (RESERVED_AUTOMATION_BASENAMES.has(basename)) continue;
           if (a.path && a.content && !byPath.has(a.path)) {
             byPath.set(a.path, a.content);
             files.push({ path: a.path, content: a.content });
@@ -591,8 +636,15 @@ export class ExecutionsService {
           browser: run.browser,
           headed: run.headed,
           environment: run.environment,
-          allowedDomains: project?.allowedDomains ?? 'localhost,127.0.0.1',
+          allowedDomains: allowedDomainsWithTargets(
+            project?.allowedDomains ?? 'localhost,127.0.0.1',
+            project?.baseUrl,
+            project?.apiBaseUrl,
+          ),
           targetBaseUrl: project?.baseUrl ?? '',
+          // API tests resolve relative paths against the API base URL; when
+          // none is configured the UI base URL is the API host too.
+          targetApiBaseUrl: project?.apiBaseUrl || project?.baseUrl || '',
           markers: settings.markers ?? '',
           timeoutSeconds: settings.timeoutSeconds,
           retries: settings.retries,
@@ -824,7 +876,15 @@ export class ExecutionsService {
         if (status === 'passed') {
           await log.pass(`${name} passed${dur}`, { testCaseId, testName: name, progress: pct(), meta });
         } else if (status === 'skipped') {
-          await log.info(`${name} skipped`, { testCaseId, testName: name, progress: pct(), meta });
+          // The skip reason (e.g. "target app not running") is what turns an
+          // all-skipped run from a mystery into an actionable message.
+          const why = String(payload.value_summary || '');
+          await log.info(`${name} skipped${why ? ` — ${why}` : ''}`, {
+            testCaseId,
+            testName: name,
+            progress: pct(),
+            meta,
+          });
         } else {
           // pytest's own crash message is authoritative; only fall back to the
           // last runtime error scraped off the page when it is absent, so a
@@ -840,6 +900,21 @@ export class ExecutionsService {
           });
         }
         return;
+      }
+      return;
+    }
+
+    // Generated API tests emit one 'api' step per HTTP exchange — surface the
+    // complete request trace (method, full URL, status) in the live log so a
+    // failing request is diagnosable without reading the runner's stdout.
+    // Non-2xx/3xx responses arrive as 'warning': visible, but not an ERROR —
+    // negative tests legitimately expect 4xx.
+    if (action === 'api') {
+      const line = `API ${String(payload.target || '')} → ${String(payload.value_summary || '')}`;
+      if (status === 'warning') {
+        await log.warning(line, { testCaseId, testName: name });
+      } else {
+        await log.debug(line, { testCaseId, testName: name });
       }
       return;
     }
@@ -980,10 +1055,19 @@ export class ExecutionsService {
           progress: 100,
         });
         break;
-      case 'failed':
+      case 'failed': {
         log.setStage('Failed');
-        await log.fail(`Execution failed — ${summary}.`, { progress: 100, meta });
+        // With zero failing tests (e.g. every test skipped because the target
+        // app was down) the counts alone explain nothing — put the recorded
+        // reason on the terminal line itself, not only behind "details".
+        const inline =
+          err && !Number(metrics.failed ?? 0) ? ` ${err.slice(0, 300)}` : '';
+        await log.fail(`Execution failed — ${summary}.${inline}`, {
+          progress: 100,
+          meta,
+        });
         break;
+      }
       case 'timed_out':
         log.setStage('Failed');
         await log.error('Execution timed out before completing.', {

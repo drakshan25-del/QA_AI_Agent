@@ -92,15 +92,21 @@ export function ProjectSettingsPage(): JSX.Element {
                   key={project.id}
                   submitLabel="Save changes"
                   submitting={mutation.isPending}
+                  hasSavedApiKey={project.hasCloudApiKey}
                   initial={{
                     name: project.name,
                     description: project.description,
                     baseUrl: project.baseUrl,
+                    apiBaseUrl: project.apiBaseUrl,
                     allowedDomains: project.allowedDomains,
                     repository: project.repository,
                     environment: project.environment,
+                    llmType: project.llmType,
                     llmModel: project.llmModel,
                     llmTemperature: project.llmTemperature,
+                    cloudProvider: project.cloudProvider || 'openai',
+                    cloudModel: project.cloudModel,
+                    cloudBaseUrl: project.cloudBaseUrl,
                     runner: project.runner,
                   }}
                   onSubmit={(values) => mutation.mutate(values)}

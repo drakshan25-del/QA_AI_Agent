@@ -46,12 +46,12 @@ describe('Auth (e2e)', () => {
   it('registers a user, logs in and returns the profile from /auth/me', async () => {
     await request(app.getHttpServer())
       .post('/api/v2/auth/register')
-      .send({ email: 'qa@example.com', password: 'password123', role: 'qa_engineer' })
+      .send({ email: 'qa1@example.com', password: 'password123', role: 'qa_engineer' })
       .expect(201);
 
     const login = await request(app.getHttpServer())
       .post('/api/v2/auth/login')
-      .send({ email: 'qa@example.com', password: 'password123' })
+      .send({ email: 'qa1@example.com', password: 'password123' })
       .expect(200);
     const token = login.body.accessToken as string;
 
@@ -59,8 +59,16 @@ describe('Auth (e2e)', () => {
       .get('/api/v2/auth/me')
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    expect(me.body.email).toBe('qa@example.com');
+    expect(me.body.email).toBe('qa1@example.com');
     expect(me.body.role).toBe('qa_engineer');
+  });
+
+  it('registers the configured superowner email as superowner regardless of requested role', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v2/auth/register')
+      .send({ email: 'rakshandangol93@gmail.com', password: 'password123', role: 'qa_engineer' })
+      .expect(201);
+    expect(res.body.role).toBe('superowner');
   });
 
   it('rejects unauthenticated access to a protected route', async () => {

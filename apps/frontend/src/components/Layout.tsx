@@ -85,6 +85,11 @@ export function Layout(): JSX.Element {
             <NavLink to="/audit" className={({ isActive }) => navCls(isActive)}>
               Audit
             </NavLink>
+            {user?.role === 'superowner' && (
+              <NavLink to="/accounts" className={({ isActive }) => navCls(isActive)}>
+                Accounts
+              </NavLink>
+            )}
             <NavLink to="/projects/new" className={({ isActive }) => navCls(isActive)}>
               + New project
             </NavLink>

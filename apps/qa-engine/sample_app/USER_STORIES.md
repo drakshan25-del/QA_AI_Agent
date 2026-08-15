@@ -50,8 +50,8 @@ straight to the Dashboard, **so that** I immediately see the state of the system
 - Given the login page, when invalid credentials are submitted, then the form
   is re-rendered with the message "Invalid credentials" (never "Server error").
 - The JSON API (`POST /api/login`) returns 401 with `invalid_credentials`
-  for bad credentials, and 200 with a token and the caller's role
-  (`admin` or `user`) on success.
+  for bad credentials, and 200 with the success message "Welcome", a token
+  and the caller's role (`admin` or `user`) on success.
 
 ### US-104 · Log out ends the session
 **As a** logged-in user, **I want** to log out, **so that** my session cannot

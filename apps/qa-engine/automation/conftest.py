@@ -15,11 +15,17 @@ Fixtures exposed to every test under ``automation/``:
 * ``target_available`` — pings ``base_url`` once per session (httpx, 2 s
   timeout) and skips requesting tests when the target app is not running, so
   suites stay green without services.
-* ``api_client`` — an ``httpx.Client`` preconfigured with ``base_url`` for
+* ``api_base_url`` — root the API under test is served at:
+  ``QA_TARGET_API_BASE_URL`` when the project configures a dedicated API base
+  URL (different port or an ``/api/v1``-style prefix), else ``base_url``.
+* ``api_client`` — an ``httpx.Client`` preconfigured with ``api_base_url`` for
   generated API tests (no browser). Every outbound request — including
   redirect hops — is checked against ``QA_ALLOWED_DOMAINS`` and refused when
   the host is not allow-listed, mirroring the browser-route guard so
-  non-browser tests get the same SEC-003 enforcement.
+  non-browser tests get the same SEC-003 enforcement. Every request/response
+  is recorded; when a test fails, the crash message is enriched with the last
+  exchange (method, full URL, actual status, response body) so a bare
+  ``assert 404 == 200`` becomes diagnosable from the live log and the report.
 * ``_domain_allowlist_guard`` (autouse) — runtime enforcement of the domain
   allow-list (SEC-003, complements the static FR-VAL-004 check): every
   browser test's Playwright context gets a route that aborts requests whose
@@ -134,6 +140,19 @@ def credentials() -> Credentials:
     )
 
 
+@pytest.fixture(scope="session")
+def api_base_url(base_url: str) -> str:
+    """Root the API under test is served at (FR-AUT-005).
+
+    ``QA_TARGET_API_BASE_URL`` carries the project's configured API base URL
+    (injected by the execution service); it falls back to ``base_url`` when
+    the API is served from the same origin as the UI. Keeping the two apart
+    is what stops generated API tests from firing at the frontend URL and
+    collecting 404s.
+    """
+    return (os.environ.get("QA_TARGET_API_BASE_URL") or base_url).rstrip("/")
+
+
 def _api_request_guard(domains: list[str]):
     """Build an httpx request hook enforcing the domain allow-list (SEC-003).
 
@@ -151,26 +170,118 @@ def _api_request_guard(domains: list[str]):
     return _enforce
 
 
+#: Response-body excerpt kept per exchange for failure diagnostics. Bounded so
+#: a large payload never bloats reports; secrets are redacted downstream
+#: (results parser + backend log redaction, SEC-007).
+_API_BODY_SNIPPET_CHARS = 300
+
+
+def _format_exchange(exchange: dict) -> str:
+    """One-line ``METHOD url -> status; body: ...`` rendering of an exchange."""
+    line = f"{exchange['method']} {exchange['url']} -> {exchange['status']}"
+    body = " ".join(str(exchange.get("body") or "").split())
+    if body:
+        line += f"; body: {body[:200]}"
+    return line
+
+
+def _emit_api_step(config: pytest.Config, node_id: str, exchange: dict) -> None:
+    """Stream one API exchange as a live 'api' step event (FR-EXE-006).
+
+    Uses the engine's ``step_events`` plugin when it is loaded (engine-managed
+    runs pass ``-p engine.service.step_events``); a standalone pytest run has
+    no plugin and this is a no-op, keeping the automation tree dependency-light.
+    """
+    plugin = config.pluginmanager.get_plugin("engine.service.step_events")
+    emit = getattr(plugin, "emit_step", None)
+    if emit is None:
+        return
+    emit(
+        "api",
+        target=f"{exchange['method']} {exchange['url']}",
+        value=f"HTTP {exchange['status']} {exchange.get('reason', '')}".strip(),
+        status="passed" if int(exchange["status"]) < 400 else "warning",
+        test_name=node_id,
+    )
+
+
 @pytest.fixture()
-def api_client(base_url: str) -> Iterator[httpx.Client]:
+def api_client(
+    api_base_url: str, request: pytest.FixtureRequest
+) -> Iterator[httpx.Client]:
     """Allow-list-guarded HTTP client for generated API tests (SEC-003).
 
     The browser guard above cannot cover non-browser tests, so this client
     applies the same ``QA_ALLOWED_DOMAINS`` policy at the httpx layer: a
     request hook refuses any request — first or redirect hop — whose host is
     not allow-listed. Fails closed, like the browser route guard.
+
+    Every response is additionally recorded on the test item (and streamed as
+    a live ``api`` step event) so a failing test can report the method, full
+    URL, actual status and response body instead of a bare status assertion.
     """
     domains = _allowed_domains(os.environ.get("QA_ALLOWED_DOMAINS"))
+    exchanges: list[dict] = []
+    request.node._qa_api_exchanges = exchanges  # read by pytest_runtest_makereport
+
+    def _record(response: httpx.Response) -> None:
+        try:
+            response.read()
+            body = response.text[:_API_BODY_SNIPPET_CHARS]
+        except Exception:  # noqa: BLE001 - diagnostics must never fail a request
+            body = ""
+        exchange = {
+            "method": response.request.method,
+            "url": str(response.request.url),
+            "status": response.status_code,
+            "reason": response.reason_phrase,
+            "body": body,
+        }
+        exchanges.append(exchange)
+        _emit_api_step(request.config, request.node.nodeid, exchange)
+
     client = httpx.Client(
-        base_url=base_url,
+        base_url=api_base_url,
         timeout=10.0,
         follow_redirects=False,
-        event_hooks={"request": [_api_request_guard(domains)]},
+        event_hooks={
+            "request": [_api_request_guard(domains)],
+            "response": [_record],
+        },
     )
     try:
         yield client
     finally:
         client.close()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Enrich failing API tests with their recorded HTTP exchanges.
+
+    ``assert 404 == 200`` explains nothing on its own. The last exchange
+    (method, full URL, actual status, response body) is appended to the crash
+    message — the single string that travels through the JUnit report, the
+    step-events stream and the stored test result — so the live log and the
+    execution report show WHY the request failed. The full tail of exchanges
+    is attached as a report section for local debugging.
+    """
+    outcome = yield
+    report = outcome.get_result()
+    exchanges = getattr(item, "_qa_api_exchanges", None)
+    if report.when != "call" or not report.failed or not exchanges:
+        return
+    report.sections.append(
+        ("API exchanges (last 5)", "\n".join(_format_exchange(e) for e in exchanges[-5:]))
+    )
+    crash = getattr(getattr(report, "longrepr", None), "reprcrash", None)
+    if crash is not None and getattr(crash, "message", ""):
+        # Keep the appended detail on the FIRST line: junit's failure message
+        # and the live log's failure reason both take only that line.
+        first, sep, rest = crash.message.partition("\n")
+        crash.message = (
+            f"{first} | last API call: {_format_exchange(exchanges[-1])}{sep}{rest}"
+        )
 
 
 @pytest.fixture(scope="session")

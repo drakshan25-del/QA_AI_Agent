@@ -5,6 +5,7 @@ import { Project, ProjectMember } from '../../entities';
 import { AuthUser } from '../decorators';
 import { ForbiddenAppException, NotFoundAppException } from '../errors';
 import { Role } from '../enums';
+import { isAdminRole } from './permissions';
 
 /** Project membership checks (V2_CONTRACT §1 — project-scoped routes). */
 @Injectable()
@@ -28,7 +29,7 @@ export class MembershipService {
   }
 
   async ensureMember(projectId: string, user: AuthUser): Promise<void> {
-    if (user.role === 'admin') return;
+    if (isAdminRole(user.role)) return;
     const ok = await this.isMember(projectId, user.id);
     if (!ok) {
       throw new ForbiddenAppException(

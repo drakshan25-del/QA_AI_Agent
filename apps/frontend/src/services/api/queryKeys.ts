@@ -3,6 +3,7 @@ import type { TestCaseFilter, AuditFilter } from './endpoints';
 /** Centralised react-query keys so invalidation stays consistent. */
 export const qk = {
   health: ['health'] as const,
+  users: ['users'] as const,
   projects: ['projects'] as const,
   project: (id: string) => ['projects', id] as const,
   projectMetrics: (id: string) => ['projects', id, 'metrics'] as const,
@@ -26,6 +27,7 @@ export const qk = {
     [...qk.project(projectId), 'regression-comparisons'] as const,
   executionEvents: (id: string) => ['executions', id, 'events'] as const,
   executionReport: (id: string) => ['executions', id, 'report'] as const,
+  ciRuns: (projectId: string) => ['ci', projectId, 'runs'] as const,
   jobs: (projectId: string) => ['projects', projectId, 'jobs'] as const,
   job: (id: string) => ['jobs', id] as const,
   audit: (filter: AuditFilter) => ['audit', filter] as const,

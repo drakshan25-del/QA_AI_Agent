@@ -65,7 +65,7 @@ function MetricTiles({ projectId }: { projectId: string }): JSX.Element {
 function CiPanel({ projectId }: { projectId: string }): JSX.Element {
   const qc = useQueryClient();
   const runsQuery = useQuery({
-    queryKey: ['ci', projectId, 'runs'],
+    queryKey: qk.ciRuns(projectId),
     queryFn: () => ciApi.listRuns(projectId),
     enabled: !!projectId,
   });
@@ -94,7 +94,7 @@ function CiPanel({ projectId }: { projectId: string }): JSX.Element {
         <Banner kind={dispatch.data.mode === 'dispatched' ? 'success' : 'warn'}>
           CI run {dispatch.data.ciRunId.slice(0, 8)} created ({dispatch.data.mode}
           {dispatch.data.mode !== 'dispatched'
-            ? ' — configure GITHUB_TOKEN and a repository for a real dispatch'
+            ? ' — GitHub refused the dispatch; check the workflow file and token access'
             : ''}
           ).
           {dispatch.data.ciUrl && (

@@ -30,7 +30,8 @@ export type Permission =
   | 'ci.trigger'
   | 'classification.override'
   | 'report.export'
-  | 'admin.manage';
+  | 'admin.manage'
+  | 'accounts.manage';
 
 const ALL_EDIT_ROLES: Role[] = [
   'admin',
@@ -72,11 +73,20 @@ export const PERMISSION_ROLES: Record<Permission, Role[]> = {
     'devops',
   ],
   'admin.manage': ['admin'],
+  // Account enable/disable is reserved for the platform owner — admins are
+  // deliberately excluded from this one.
+  'accounts.manage': ['superowner'],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {
-  if (role === 'admin') return true;
+  if (role === 'superowner') return true;
+  if (role === 'admin') return permission !== 'accounts.manage';
   return (PERMISSION_ROLES[permission] ?? []).includes(role);
+}
+
+/** Roles with platform-wide (cross-project) visibility. */
+export function isAdminRole(role: Role): boolean {
+  return role === 'admin' || role === 'superowner';
 }
 
 export const PERMISSION_KEY = 'requiredPermission';

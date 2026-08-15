@@ -24,6 +24,7 @@ import { ExecutionLivePage } from './pages/ExecutionLivePage';
 import { ExecutionReportPage } from './pages/ExecutionReportPage';
 import { ProjectReportsPage } from './pages/ProjectReportsPage';
 import { AuditPage } from './pages/AuditPage';
+import { AccountsPage } from './pages/AccountsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 /**
@@ -62,6 +63,7 @@ export const router = createBrowserRouter(
 
         <Route path="/approvals" element={<ApprovalsPage />} />
         <Route path="/audit" element={<AuditPage />} />
+        <Route path="/accounts" element={<AccountsPage />} />
 
         <Route path="/executions/:id" element={<ExecutionLivePage />} />
         <Route path="/executions/:id/report" element={<ExecutionReportPage />} />

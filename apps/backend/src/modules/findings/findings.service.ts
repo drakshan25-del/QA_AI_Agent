@@ -8,6 +8,7 @@ import { FindingClassification } from '../../common/enums';
 import { AuditService } from '../audit/audit.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 
 @Injectable()
 export class FindingsService {
@@ -20,6 +21,7 @@ export class FindingsService {
     private readonly membership: MembershipService,
     private readonly audit: AuditService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {}
 
   private async projectOfResult(result: TestResult): Promise<ExecutionRun> {
@@ -45,6 +47,7 @@ export class FindingsService {
     const run = await this.projectOfResult(result);
     await this.membership.ensureMember(run.projectId, user);
 
+    const llm = await this.llm.engineLlmFor(run.projectId);
     const output = await this.engine.classify(
       {
         test: {
@@ -53,6 +56,7 @@ export class FindingsService {
           error_message: result.errorMessage,
         },
         context: { note: context || '', metrics: run.metrics || {} },
+        llm,
       },
       correlationId,
     );

@@ -39,8 +39,17 @@ def client(monkeypatch):
         sample_app.FLASHES.update(flashes_before)
 
 
+#: Marks a request as a top-level browser form submit: POST /login keeps the
+#: HTML redirect flow for these and answers API clients with JSON.
+BROWSER_FORM = {"Sec-Fetch-Mode": "navigate"}
+
+
 def _login(client: TestClient, username: str = USERNAME, password: str = PASSWORD):
-    return client.post("/login", data={"username": username, "password": password})
+    return client.post(
+        "/login",
+        data={"username": username, "password": password},
+        headers=BROWSER_FORM,
+    )
 
 
 class TestHealthAndLoginPage:
@@ -150,6 +159,43 @@ class TestJsonApi:
         body = response.json()
         assert body["status"] == "ok"
         assert body["token"] in sample_app.SESSIONS
+
+    def test_login_success_carries_welcome_message(self, client):
+        # US-103: the 200 body includes the same success message the HTML
+        # flash shows, so API tests can assert a human-readable confirmation.
+        response = _api_login(client)
+        assert response.status_code == 200
+        assert response.json()["message"] == "Welcome"
+
+    def test_form_login_without_browser_navigation_returns_json_envelope(self, client):
+        # curl/Swagger/httpx post the same form without Sec-Fetch-Mode:
+        # navigate — they get the documented JSON contract, not a redirect.
+        response = client.post(
+            "/login", data={"username": USERNAME, "password": PASSWORD}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "success"
+        assert body["message"] == "Login successful"
+        assert body["data"]["user"]["email"] == USERNAME
+        auth = body["data"]["authentication"]
+        assert auth["tokenType"] == "Bearer"
+        assert auth["accessToken"] in sample_app.SESSIONS
+        # The issued token works immediately as Bearer auth on /api/*.
+        items = client.get(
+            "/api/items", headers={"Authorization": f"Bearer {auth['accessToken']}"}
+        )
+        assert items.status_code == 200
+
+    def test_form_login_api_style_rejects_bad_credentials_with_401(self, client):
+        response = client.post(
+            "/login", data={"username": USERNAME, "password": "wrong-" + PASSWORD}
+        )
+        assert response.status_code == 401
+        assert response.json() == {
+            "status": "error",
+            "message": "Invalid credentials",
+        }
 
     def test_login_rejects_bad_password(self, client):
         response = _api_login(client, password="wrong-" + PASSWORD)

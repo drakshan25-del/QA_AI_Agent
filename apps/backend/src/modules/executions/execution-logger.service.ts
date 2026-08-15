@@ -150,6 +150,9 @@ export class ExecutionLoggerService {
           testCaseId: entry.testCaseId ?? '',
           testName: entry.testName ?? '',
           meta,
+          // Same instant, same encoding as the live payload below, so a
+          // replayed row renders the identical clock time (no UTC/local skew).
+          ts,
         }),
       );
     } catch (err) {

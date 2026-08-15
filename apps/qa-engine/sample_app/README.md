@@ -67,7 +67,7 @@ SAMPLE_APP_DEFECTS=login_message,duplicate_add \
 | ------------------------- | ---------------------------------------------------------------- |
 | `GET /health`             | `{"status": "ok"}`                                               |
 | `GET /login`              | Login form                                                       |
-| `POST /login`             | Regular user: 303 to `/items`. Admin: 303 to `/dashboard`. Both with `Welcome` flash. Failure: re-renders form with error flash. |
+| `POST /login`             | Browser form submit (`Sec-Fetch-Mode: navigate`) — regular user: 303 to `/items`, admin: 303 to `/dashboard`, both with `Welcome` flash; failure re-renders the form. API clients (curl/Swagger/httpx) — 200 JSON `{"status":"success","message":"Login successful","data":{"user":{id,email,firstName,lastName,role},"authentication":{tokenType,accessToken,expiresInSeconds,refreshToken}}}`; failure 401 `{"status":"error","message":"Invalid credentials"}`. The `accessToken` works as `Bearer` auth on `/api/*`. |
 | `POST /logout`            | Ends the session, 303 to `/login`                                |
 | `GET /items`              | Item list (requires session cookie, else 303 to `/login`)        |
 | `POST /items/add`         | Add item (form field `text`), 303 back to `/items`               |
@@ -97,7 +97,7 @@ cookie. Errors are always `{"error": "<code>"}` — 401 unauthenticated,
 | Route                            | Behaviour                                        |
 | -------------------------------- | ------------------------------------------------ |
 | `GET /api/health`                | `{"status": "ok"}`                               |
-| `POST /api/login`                | `{"status","token","role"}` — role `admin`/`user` |
+| `POST /api/login`                | 200 `{"status":"ok","message":"Welcome","token",…,"role"}` — role `admin`/`user`; 401 `invalid_credentials` |
 | `GET/POST /api/items`, `DELETE /api/items/{id}` | Item CRUD (any session; defect-aware) |
 | `GET /api/dashboard/summary`     | Live totals, recents, by-category/by-role counts |
 | `GET /api/admin/users?q=&role=&status=` | Admin list — never includes password material |

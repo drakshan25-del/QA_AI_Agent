@@ -11,6 +11,7 @@ import { ApprovalsService } from '../approvals/approvals.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { JobsService } from '../jobs/jobs.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 
 /**
  * V3 report counts (FR-V3-RPT-001): total, passed, failed, skipped, blocked,
@@ -43,6 +44,7 @@ export class ReportsService {
     private readonly approvals: ApprovalsService,
     private readonly jobs: JobsService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {
     this.jobs.registerRetryHandler('report', (original, user, correlationId) =>
       this.generate(
@@ -197,7 +199,8 @@ export class ReportsService {
         message: 'Rendering HTML/Markdown report and AI narrative',
         progress: 65,
       });
-      const report = await this.engine.report({ data }, correlationId);
+      const llm = await this.llm.engineLlmFor(run.projectId);
+      const report = await this.engine.report({ data, llm }, correlationId);
       const built: Record<string, unknown> = {
         data: report.data ?? data,
         counts,

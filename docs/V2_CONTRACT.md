@@ -47,7 +47,8 @@ Request body:
   "temperature": 0.1,
   "testType": "ui",                  // "ui" (default) | "api"
   "extraMarkers": ["regression"],    // extra pytest markers, see §3
-  "apiSummary": ""                   // optional API-doc context for api type
+  "apiSummary": ""                   // api type: authoritative API surface — the backend
+                                     // sends the parsed `api_doc` uploads + requirement text
 }
 ```
 
@@ -59,7 +60,28 @@ Behaviour per type:
   written to `automation/generated_tests/test_<slug>.py`.
 - **`api`** — browser-free tests using the guarded `api_client` httpx fixture
   with relative paths, written to `test_api_<slug>.py`. Playwright imports and
-  `page` fixtures are rejected by the engine's post-generation checks.
+  `page` fixtures are rejected by the engine's post-generation checks. When
+  `apiSummary` contains extractable `METHOD /path` pairs, every `api_client`
+  call must match a documented endpoint (method AND path; `{id}`/`:id`
+  templates match one segment) — undocumented routes are rejected and
+  regenerated, so invented endpoints never reach execution. For api
+  generation the backend sends the project's `apiBaseUrl` (falling back to
+  `baseUrl`) as `baseUrl`.
+
+`POST /execute` additionally accepts `targetApiBaseUrl` → exported to the
+runner as `QA_TARGET_API_BASE_URL`; the `api_client` fixture resolves relative
+paths against it (falling back to `QA_TARGET_BASE_URL`). The backend also
+merges the hosts of both configured target URLs into `allowedDomains` so a
+project whose API lives on another host runs instead of being guard-refused.
+
+Materialise ownership guard: the engine records every file it materialises
+(path + content hash in `automation/.materialised.json`) and only ever
+overwrites files it wrote itself. Existing files with different content —
+the framework's `base_page.py`, hand-written page objects, externally edited
+files — are kept and reported in the run's status detail, never clobbered.
+The backend additionally never sends artifacts named `base_page.py`,
+`__init__.py` or `conftest.py`, and generation discards page objects that
+shadow those framework-owned modules.
 
 Marker enforcement is deterministic (not left to the LLM): every test file gets
 `generated`; api files additionally get `api`; each `extraMarkers` entry is

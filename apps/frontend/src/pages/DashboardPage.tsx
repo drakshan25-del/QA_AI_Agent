@@ -6,19 +6,34 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
-import { auditApi, projectsApi } from '../services/api/endpoints';
+import { auditApi, projectsApi, type AuditFilter } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
+import { useAuth } from '../auth/AuthContext';
 import { formatRelative } from '../lib/format';
+import { isAdminRole } from '../services/api/types';
 import type { AuditEvent, Project, Paginated } from '../services/api/types';
 import L from '../styles/layout.module.css';
 
-function RecentActivity(): JSX.Element {
+// Non-admin audit queries must be project-scoped (server-enforced), so
+// non-admins see their first project's activity instead of a 403 banner.
+function RecentActivity({ projects }: { projects: Project[] | undefined }): JSX.Element {
+  const { user } = useAuth();
+  const isAdmin = isAdminRole(user?.role);
+  const projectId = projects?.[0]?.id;
+  const filter: AuditFilter = isAdmin ? { limit: 12 } : { limit: 12, projectId };
   const q = useQuery({
-    queryKey: qk.audit({ limit: 12 }),
-    queryFn: () => auditApi.list({ limit: 12 }),
+    queryKey: qk.audit(filter),
+    queryFn: () => auditApi.list(filter),
+    enabled: isAdmin || !!projectId,
   });
+  const subtitle = isAdmin
+    ? 'Latest audited actions across the platform'
+    : 'Latest audited actions in your projects';
   return (
-    <Card title="Recent activity" subtitle="Latest audited actions across the platform">
+    <Card title="Recent activity" subtitle={subtitle}>
+      {!isAdmin && !projectId ? (
+        <p className={L.muted}>No activity yet.</p>
+      ) : (
       <QueryState query={q} loadingLabel="Loading activity…">
         {(data) => {
           const events: AuditEvent[] = Array.isArray(data)
@@ -46,6 +61,7 @@ function RecentActivity(): JSX.Element {
           );
         }}
       </QueryState>
+      )}
     </Card>
   );
 }
@@ -110,7 +126,7 @@ export function DashboardPage(): JSX.Element {
         }
       </QueryState>
 
-      <RecentActivity />
+      <RecentActivity projects={projectsQuery.data} />
     </div>
   );
 }

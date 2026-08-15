@@ -1,6 +1,8 @@
 # Test run output (anchored to the qa-engine package root)
 artifacts/*
 !artifacts/.gitkeep
+# Engine materialise ownership record (runtime state, per-workspace)
+automation/.materialised.json
 reports/*
 !reports/.gitkeep
 finetune/work/

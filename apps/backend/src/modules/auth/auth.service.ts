@@ -19,6 +19,7 @@ export interface PublicUser {
   email: string;
   role: Role;
   name: string;
+  isActive: boolean;
   createdAt: Date;
 }
 
@@ -36,6 +37,11 @@ export class AuthService implements OnModuleInit {
 
   /** Seed the admin from env on first boot (V2_CONTRACT §1). */
   async onModuleInit(): Promise<void> {
+    await this.seedAdmin();
+    await this.promoteSuperowner();
+  }
+
+  private async seedAdmin(): Promise<void> {
     const seed = this.config.get<AppConfig['seedAdmin']>('seedAdmin')!;
     if (!seed.email || !seed.password) {
       this.logger.warn('SEED_ADMIN_EMAIL/PASSWORD not set — skipping admin seed');
@@ -61,12 +67,39 @@ export class AuthService implements OnModuleInit {
     });
   }
 
+  private superownerEmail(): string {
+    return this.config.get<AppConfig['superowner']>('superowner')!.email;
+  }
+
+  /**
+   * The SUPEROWNER_EMAIL account is the platform owner: ensure it always
+   * carries the `superowner` role (it may predate the role, e.g. as admin).
+   */
+  private async promoteSuperowner(): Promise<void> {
+    const email = this.superownerEmail();
+    if (!email) return;
+    const owner = await this.users.findOne({ where: { email } });
+    if (!owner || owner.role === 'superowner') return;
+    const previousRole = owner.role;
+    owner.role = 'superowner';
+    await this.users.save(owner);
+    this.logger.log(`Promoted ${email} to superowner`);
+    await this.audit.record({
+      actor: 'system',
+      action: 'user.promote_superowner',
+      resourceType: 'user',
+      resourceId: owner.id,
+      metadata: { email, previousRole },
+    });
+  }
+
   toPublic(u: User): PublicUser {
     return {
       id: u.id,
       email: u.email,
       role: u.role,
       name: u.name,
+      isActive: u.isActive,
       createdAt: u.createdAt,
     };
   }
@@ -83,10 +116,16 @@ export class AuthService implements OnModuleInit {
         'email_taken',
       );
     }
+    // The configured owner email always signs up as superowner; everyone
+    // else gets the (validated, non-privileged) requested role.
+    const role: Role =
+      email === this.superownerEmail()
+        ? 'superowner'
+        : dto.role || 'qa_engineer';
     const user = this.users.create({
       email,
       passwordHash: await this.passwords.hash(dto.password),
-      role: dto.role || 'qa_engineer',
+      role,
       name: dto.name || '',
       isActive: true,
     });
@@ -113,11 +152,18 @@ export class AuthService implements OnModuleInit {
 
   async validateUser(email: string, password: string): Promise<User> {
     const user = await this.findWithHash(email.toLowerCase().trim());
-    if (!user || !user.isActive) {
+    if (!user) {
       throw new UnauthorizedAppException('Invalid credentials');
     }
     const ok = await this.passwords.compare(password, user.passwordHash);
     if (!ok) throw new UnauthorizedAppException('Invalid credentials');
+    // Only reveal the disabled state to callers holding valid credentials.
+    if (!user.isActive) {
+      throw new UnauthorizedAppException(
+        'This account has been disabled. Contact the administrator.',
+        { reason: 'account_disabled' },
+      );
+    }
     return user;
   }
 

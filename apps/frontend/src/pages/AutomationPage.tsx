@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useBlocker } from 'react-router-dom';
+import { Link, useBlocker } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { LiveJobConsole } from '../components/LiveJobConsole';
@@ -18,7 +18,13 @@ import { RunLauncher } from '../features/executions/RunLauncher';
 import { ValidationFindings } from '../features/automation/ValidationFindings';
 import { useProjectId } from '../features/projects/hooks';
 import { useProjectEvents } from '../hooks/useProjectEvents';
-import { automationApi, testCasesApi } from '../services/api/endpoints';
+import {
+  automationApi,
+  ciApi,
+  gitApi,
+  projectsApi,
+  testCasesApi,
+} from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 import type { ApprovalDecision, GeneratedArtifact } from '../services/api/types';
 import { toDisplayString } from '../lib/sanitize';
@@ -26,6 +32,12 @@ import L from '../styles/layout.module.css';
 import s from '../features/automation/automation.module.css';
 
 type Tab = 'code' | 'diff' | 'validation' | 'trace' | 'plan';
+
+/**
+ * Validation states that satisfy the approved+validated gate (run, push to
+ * GitHub, CI dispatch) — mirrors the server's VALIDATION_OK_STATUSES.
+ */
+const VALIDATED_OK = ['passed', 'passed_with_warnings', 'overridden'];
 
 function ExecutionPlanTab({ artifactId }: { artifactId: string }): JSX.Element {
   const q = useQuery({
@@ -165,9 +177,7 @@ function ArtifactDetail({
     onSuccess: invalidate,
   });
 
-  const validated = ['passed', 'passed_with_warnings', 'overridden'].includes(
-    artifact.validationStatus,
-  );
+  const validated = VALIDATED_OK.includes(artifact.validationStatus);
   const runnable =
     artifact.approvalStatus === 'approved' && artifact.status === 'active' && validated;
   const traceEntries = Object.entries(artifact.traceability ?? {});
@@ -383,6 +393,33 @@ export function AutomationPage(): JSX.Element {
     },
   });
 
+  const projectQuery = useQuery({
+    queryKey: qk.project(projectId),
+    queryFn: () => projectsApi.get(projectId),
+    enabled: !!projectId,
+  });
+  const repoConfigured = !!projectQuery.data?.repository?.trim();
+  // Mirrors the server-side push/dispatch gate exactly.
+  const eligibleCount = (listQuery.data ?? []).filter(
+    (a) =>
+      a.kind === 'test_file' &&
+      a.status === 'active' &&
+      a.approvalStatus === 'approved' &&
+      VALIDATED_OK.includes(a.validationStatus),
+  ).length;
+  const pushToGitHub = useMutation({
+    mutationFn: () => gitApi.push(projectId),
+  });
+  const runCi = useMutation({
+    mutationFn: () => ciApi.dispatch(projectId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: qk.ciRuns(projectId) }),
+  });
+  const cicdDisabledReason = !repoConfigured
+    ? 'Configure a GitHub repository in Project Settings first'
+    : eligibleCount === 0
+      ? 'No approved + validated automation files yet'
+      : undefined;
+
   return (
     <div className={L.stack}>
       <PageHeader
@@ -417,10 +454,74 @@ export function AutomationPage(): JSX.Element {
             >
               Generate from {approvedIds.length} approved case{approvedIds.length === 1 ? '' : 's'}
             </Button>
+            <Button
+              loading={pushToGitHub.isPending}
+              disabled={!!cicdDisabledReason || pushToGitHub.isPending}
+              title={cicdDisabledReason}
+              onClick={() => pushToGitHub.mutate()}
+            >
+              Push to GitHub
+            </Button>
+            <Button
+              loading={runCi.isPending}
+              disabled={!!cicdDisabledReason || runCi.isPending}
+              title={cicdDisabledReason}
+              onClick={() => runCi.mutate()}
+            >
+              Run CI/CD Pipeline
+            </Button>
           </div>
         }
       />
 
+      {!projectQuery.isLoading && !repoConfigured && (
+        <Banner kind="warn">
+          No GitHub repository is configured for this project, so there is
+          nowhere to push the generated automation code and CI cannot be
+          dispatched. Set an &quot;owner/repo&quot; repository in{' '}
+          <Link to={`/projects/${projectId}/settings`}>Project Settings</Link>.
+        </Banner>
+      )}
+      {pushToGitHub.isError && <ErrorBanner error={pushToGitHub.error} />}
+      {pushToGitHub.isSuccess &&
+        (pushToGitHub.data.mode === 'pushed' ? (
+          <Banner kind="success">
+            Pushed {pushToGitHub.data.committed.length} file
+            {pushToGitHub.data.committed.length === 1 ? '' : 's'} to main of{' '}
+            {projectQuery.data?.repository} —{' '}
+            <a
+              href={`${pushToGitHub.data.repoUrl}/commit/${pushToGitHub.data.sha}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              commit {pushToGitHub.data.sha.slice(0, 8)}
+            </a>
+            . If the repository&apos;s workflow triggers on pushes to main, a CI
+            run may already be starting — use Run CI/CD Pipeline only for a
+            manual dispatch.
+          </Banner>
+        ) : (
+          <Banner kind="warn">{pushToGitHub.data.warning}</Banner>
+        ))}
+      {runCi.isError && <ErrorBanner error={runCi.error} />}
+      {runCi.isSuccess && (
+        <Banner kind={runCi.data.mode === 'dispatched' ? 'success' : 'warn'}>
+          CI run {runCi.data.ciRunId.slice(0, 8)} created ({runCi.data.mode}
+          {runCi.data.mode !== 'dispatched'
+            ? ' — GitHub refused the dispatch; check the workflow file and token access'
+            : ''}
+          ).
+          {runCi.data.ciUrl && (
+            <>
+              {' '}
+              <a href={runCi.data.ciUrl} target="_blank" rel="noreferrer">
+                Open on GitHub
+              </a>
+            </>
+          )}{' '}
+          <Link to={`/projects/${projectId}/reports`}>View CI runs</Link>
+        </Banner>
+      )}
       {generate.isError && <ErrorBanner error={generate.error} />}
       {activeJobId && (
         <LiveJobConsole

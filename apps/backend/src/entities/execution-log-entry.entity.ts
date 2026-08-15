@@ -60,6 +60,15 @@ export class ExecutionLogEntry {
   @Column({ type: 'simple-json', nullable: true })
   meta!: Record<string, unknown> | null;
 
+  /**
+   * Explicit UTC ISO-8601 timestamp, identical to the `ts` streamed in the
+   * live `execution.log` envelope. `createdAt` is driver-dependent (SQLite
+   * stores UTC without a zone marker, which round-trips shifted by the server
+   * offset); replayed rows must render the same clock time as live ones.
+   */
+  @Column({ type: 'varchar', default: '' })
+  ts!: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 }

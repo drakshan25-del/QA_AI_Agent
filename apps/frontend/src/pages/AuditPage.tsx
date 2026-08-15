@@ -9,6 +9,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { auditApi, projectsApi, type AuditFilter } from '../services/api/endpoints';
 import { qk } from '../services/api/queryKeys';
 import { useAuth } from '../auth/AuthContext';
+import { isAdminRole } from '../services/api/types';
 import type { AuditEvent, Paginated } from '../services/api/types';
 import { formatDate } from '../lib/format';
 import { toDisplayString } from '../lib/sanitize';
@@ -27,7 +28,7 @@ const PAGE_SIZE = 50;
 
 export function AuditPage(): JSX.Element {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
   const [draft, setDraft] = useState<AuditFilter>({ limit: PAGE_SIZE });
   const [applied, setApplied] = useState<AuditFilter>({ limit: PAGE_SIZE });
 

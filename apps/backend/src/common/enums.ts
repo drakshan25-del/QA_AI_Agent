@@ -8,9 +8,11 @@
  * Login roles (FR-V3-ENT-001): Admin, QA Lead, QA Engineer, Automation
  * Engineer, Developer, Reviewer, Viewer. `supervisor` and `devops` remain
  * accepted for accounts created under the V2 contract (`ai_agent` is not a
- * login role).
+ * login role). `superowner` is the single platform-owner account (bound to
+ * SUPEROWNER_EMAIL) — the only role allowed to enable/disable accounts.
  */
 export const ROLES = [
+  'superowner',
   'admin',
   'qa_lead',
   'qa_engineer',
@@ -109,6 +111,17 @@ export const VALIDATION_STATUSES = [
   'overridden',
 ] as const;
 export type ValidationStatus = (typeof VALIDATION_STATUSES)[number];
+
+/**
+ * Validation states that satisfy the "validated" half of the approved+validated
+ * gate (execution, git push, CI dispatch). An override is a human sign-off and
+ * counts the same as a pass — matching the frontend's runnable predicate.
+ */
+export const VALIDATION_OK_STATUSES: readonly ValidationStatus[] = [
+  'passed',
+  'passed_with_warnings',
+  'overridden',
+];
 
 /**
  * Execution-run state machine (§23.7): Queued, Preparing, Running, Stopping,

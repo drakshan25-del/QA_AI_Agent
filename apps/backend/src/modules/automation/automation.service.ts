@@ -2,9 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
+  DocumentSegment,
   GeneratedArtifact,
   GenerationRun,
   Project,
+  Requirement,
+  SourceDocument,
   TestCase,
 } from '../../entities';
 import { AuthUser } from '../../common/decorators';
@@ -20,6 +23,7 @@ import { JobsService } from '../jobs/jobs.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { MembershipService } from '../../common/access/membership.service';
 import { EngineClient } from '../../engine/engine.client';
+import { LlmRuntimeService } from '../../common/llm/llm-runtime.service';
 import { GenerateAutomationDto } from './dto/automation.dto';
 
 /**
@@ -46,12 +50,19 @@ export class AutomationService {
     @InjectRepository(GenerationRun)
     private readonly runs: Repository<GenerationRun>,
     @InjectRepository(Project) private readonly projects: Repository<Project>,
+    @InjectRepository(SourceDocument)
+    private readonly documents: Repository<SourceDocument>,
+    @InjectRepository(DocumentSegment)
+    private readonly segments: Repository<DocumentSegment>,
+    @InjectRepository(Requirement)
+    private readonly requirements: Repository<Requirement>,
     private readonly membership: MembershipService,
     private readonly audit: AuditService,
     private readonly events: EventsService,
     private readonly jobs: JobsService,
     private readonly approvals: ApprovalsService,
     private readonly engine: EngineClient,
+    private readonly llm: LlmRuntimeService,
   ) {
     this.jobs.registerRetryHandler('automation', (original, user, correlationId) =>
       this.generate(
@@ -73,6 +84,52 @@ export class AutomationService {
         correlationId,
       ),
     );
+  }
+
+  /**
+   * Authoritative description of the API surface under test, assembled for
+   * `testType: 'api'` generation (AIQA-EXEC-002). Endpoints must come from
+   * uploaded API documentation — the parsed, included segments of every
+   * `api_doc` upload — plus the requirement text the selected test cases
+   * trace to; without this the LLM invents plausible-looking routes that 404
+   * at execution time. Returns '' when the project has no API docs (the
+   * engine prompt then says so explicitly and the caller logs a warning).
+   */
+  private async buildApiSummary(
+    projectId: string,
+    cases: TestCase[],
+  ): Promise<string> {
+    const MAX_SUMMARY_CHARS = 6000;
+    const parts: string[] = [];
+
+    const docs = await this.documents.find({
+      where: { projectId, category: 'api_doc' },
+      order: { createdAt: 'ASC' },
+    });
+    for (const doc of docs.filter((d) => d.parseStatus !== 'failed')) {
+      const segs = await this.segments.find({
+        where: { documentId: doc.id, inclusionStatus: 'included' },
+        order: { sequence: 'ASC' },
+      });
+      const text = segs
+        .map((s) => s.content)
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+      if (text) parts.push(`# API documentation: ${doc.filename}\n${text}`);
+    }
+
+    const reqIds = [...new Set(cases.flatMap((c) => c.requirementIds ?? []))];
+    if (reqIds.length) {
+      const reqs = await this.requirements.find({ where: { id: In(reqIds) } });
+      const text = reqs
+        .map((r) => `${r.title ? r.title + ': ' : ''}${r.text}`.trim())
+        .filter(Boolean)
+        .join('\n');
+      if (text) parts.push(`# Requirements under test\n${text}`);
+    }
+
+    return parts.join('\n\n').slice(0, MAX_SUMMARY_CHARS);
   }
 
   async generate(
@@ -141,6 +198,11 @@ export class AutomationService {
     });
 
     this.jobs.dispatch(job, async (j, ctx) => {
+      const llm = await this.llm.engineLlmFor(projectId);
+      const llmLabel =
+        llm.type === 'cloud'
+          ? `${llm.provider}:${llm.model}`
+          : llm.model || 'the default model';
       await ctx.log({
         stage: 'framework selection',
         message: `Generating ${project.runner} Playwright automation for ${cases.length} approved test case(s)`,
@@ -149,9 +211,32 @@ export class AutomationService {
       await ctx.checkpoint();
       await ctx.log({
         stage: 'file generation',
-        message: `Creating page objects, locators and assertions with ${project.llmModel || 'the default model'}`,
+        message: `Creating page objects, locators and assertions with ${llmLabel}`,
         progress: 25,
       });
+
+      // API generation is grounded in the uploaded API documentation and runs
+      // against the API base URL, not the UI one (AIQA-EXEC-002): without
+      // both, generated requests 404 against invented routes or the wrong host.
+      let apiSummary = '';
+      if (testType === 'api') {
+        apiSummary = await this.buildApiSummary(projectId, cases);
+        if (!apiSummary.includes('# API documentation:')) {
+          await ctx.log({
+            stage: 'file generation',
+            severity: 'warning',
+            message:
+              'No parsed api_doc uploads found — endpoints derive only from the ' +
+              'approved test cases. Upload API documentation to prevent invented routes.',
+            progress: 30,
+          });
+        }
+      }
+      const targetBaseUrl =
+        testType === 'api'
+          ? project.apiBaseUrl || project.baseUrl
+          : project.baseUrl;
+
       const output = await this.engine.automation(
         {
           testCases: cases.map((c) => ({
@@ -162,13 +247,16 @@ export class AutomationService {
             expected_results: c.expectedResults ?? [],
             test_data: c.testData ?? {},
             preconditions: c.preconditions ?? [],
+            requirement_ids: c.requirementIds ?? [],
           })),
-          baseUrl: project.baseUrl,
+          baseUrl: targetBaseUrl,
           pageObjectsSummary: '',
-          model: project.llmModel || undefined,
+          model: llm.type === 'local' ? llm.model : undefined,
           temperature: project.llmTemperature,
           testType,
           extraMarkers,
+          apiSummary,
+          llm,
         },
         correlationId,
         idempotencyKey,
@@ -184,7 +272,7 @@ export class AutomationService {
           projectId,
           kind: 'automation',
           jobId: job.id,
-          model: project.llmModel,
+          model: llm.model ?? '',
           temperature: project.llmTemperature,
           contentHash: contentHash(output),
           status: 'completed',
@@ -394,7 +482,7 @@ export class AutomationService {
       });
 
       const passed = report.passed === true;
-      const findings = (report.findings as { severity?: string }[]) || [];
+      const findings = (report.issues as { severity?: string }[]) || [];
       const warnings = findings.filter(
         (f) => (f.severity || '').toLowerCase() === 'warning',
       );

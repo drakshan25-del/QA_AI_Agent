@@ -24,8 +24,14 @@ export class RolesGuard implements CanActivate {
       | AuthUser
       | undefined;
     if (!user) throw new ForbiddenAppException('No authenticated user');
-    // admin is a superuser across roles.
-    if (user.role === 'admin' || required.includes(user.role)) return true;
+    // superowner and admin are superusers across roles.
+    if (
+      user.role === 'superowner' ||
+      user.role === 'admin' ||
+      required.includes(user.role)
+    ) {
+      return true;
+    }
     throw new ForbiddenAppException(
       `Requires one of roles: ${required.join(', ')}`,
     );

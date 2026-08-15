@@ -22,7 +22,7 @@ import json
 import time
 
 from app.core.config import get_settings
-from app.core.llm import get_chat_model, require_ollama
+from app.core.llm import active_model_label, get_chat_model, require_ollama
 from app.core.logging import get_logger
 from app.core.security import redact_secrets
 from app.models.schemas import TestPlanOutput
@@ -139,7 +139,7 @@ def generate_test_plan(
     """
     require_ollama(model)
     settings = get_settings()
-    effective_model = model or settings.llm_model
+    effective_model = active_model_label(model)
     chat = get_chat_model(model, temperature).with_structured_output(TestPlanOutput)
     messages = [
         ("system", SYSTEM_PROMPT),

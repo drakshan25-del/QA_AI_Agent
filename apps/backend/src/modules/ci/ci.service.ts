@@ -1,11 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import axios from 'axios';
 import { ExecutionRun, GeneratedArtifact, Project } from '../../entities';
 import { AuthUser } from '../../common/decorators';
 import {
+  AppException,
   ConflictAppException,
   NotFoundAppException,
 } from '../../common/errors';
@@ -13,12 +14,14 @@ import { AppConfig } from '../../config/configuration';
 import { AuditService } from '../audit/audit.service';
 import { EventsService } from '../events/events.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { VALIDATION_OK_STATUSES } from '../../common/enums';
+import { normalizeRepoSlug } from '../git/repo-slug.util';
 import { DispatchWorkflowDto } from './dto/ci.dto';
 
 /**
  * CI integration (FR-CI-*). GITHUB_TOKEN is used server-side only and never
- * returned to the browser (FR-CI-004). When no token/repository is configured
- * (e.g. dev), the dispatch is simulated and clearly flagged.
+ * returned to the browser (FR-CI-004). A missing repository or token is a
+ * 400 with an actionable message — never a silently simulated run.
  */
 @Injectable()
 export class CiService {
@@ -57,7 +60,7 @@ export class CiService {
         projectId: dto.projectId,
         status: 'active',
         approvalStatus: 'approved',
-        validationStatus: 'passed',
+        validationStatus: In([...VALIDATION_OK_STATUSES]),
       },
     });
     if (ready === 0) {
@@ -78,6 +81,38 @@ export class CiService {
       );
     }
 
+    // Configuration problems are the caller's to fix — refuse before creating
+    // a run row instead of recording a phantom 'simulated' run.
+    const deny = async (reason: string) =>
+      this.audit.record({
+        actor: user.email,
+        actorId: user.id,
+        action: 'ci.dispatch',
+        resourceType: 'project',
+        resourceId: dto.projectId,
+        projectId: dto.projectId,
+        result: 'denied',
+        correlationId,
+        metadata: { reason },
+      });
+    const slug = normalizeRepoSlug(project.repository);
+    if (!slug) {
+      await deny('repo_not_configured');
+      throw new AppException(
+        'repo_not_configured',
+        "No GitHub repository is configured for this project. Set 'owner/repo' in Project Settings.",
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (!this.githubToken) {
+      await deny('github_token_missing');
+      throw new AppException(
+        'github_token_missing',
+        'GITHUB_TOKEN is not configured on the server, so a GitHub Actions dispatch is impossible. Add it to the backend environment and restart.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const run = await this.runs.save(
       this.runs.create({
         projectId: dto.projectId,
@@ -91,31 +126,29 @@ export class CiService {
       }),
     );
 
-    let mode = 'simulated';
+    let mode: string;
     let ciUrl = '';
-    if (this.githubToken && project.repository.includes('/')) {
-      try {
-        // Default to the workflow that actually exists in this repository
-        // (.github/workflows/playwright-ci.yml) — 'qa.yml' would 404.
-        const workflow = dto.workflow || 'playwright-ci.yml';
-        const ref = dto.ref || 'main';
-        await axios.post(
-          `https://api.github.com/repos/${project.repository}/actions/workflows/${workflow}/dispatches`,
-          { ref },
-          {
-            headers: {
-              Authorization: `Bearer ${this.githubToken}`,
-              Accept: 'application/vnd.github+json',
-            },
-            timeout: 15_000,
+    try {
+      // Default to the workflow that actually exists in this repository
+      // (.github/workflows/playwright-ci.yml) — 'qa.yml' would 404.
+      const workflow = dto.workflow || 'playwright-ci.yml';
+      const ref = dto.ref || 'main';
+      await axios.post(
+        `https://api.github.com/repos/${slug}/actions/workflows/${workflow}/dispatches`,
+        { ref },
+        {
+          headers: {
+            Authorization: `Bearer ${this.githubToken}`,
+            Accept: 'application/vnd.github+json',
           },
-        );
-        mode = 'dispatched';
-        ciUrl = `https://github.com/${project.repository}/actions`;
-      } catch (err) {
-        this.logger.warn(`GitHub dispatch failed: ${(err as Error).message}`);
-        mode = 'dispatch-failed';
-      }
+          timeout: 15_000,
+        },
+      );
+      mode = 'dispatched';
+      ciUrl = `https://github.com/${slug}/actions`;
+    } catch (err) {
+      this.logger.warn(`GitHub dispatch failed: ${(err as Error).message}`);
+      mode = 'dispatch-failed';
     }
 
     run.ciRunId = run.id;

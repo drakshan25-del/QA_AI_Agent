@@ -7,6 +7,7 @@
 // ---- Enums (V2_CONTRACT §1, §5) --------------------------------------------
 
 export type Role =
+  | 'superowner'
   | 'admin'
   | 'qa_lead'
   | 'qa_engineer'
@@ -18,6 +19,7 @@ export type Role =
   | 'devops';
 
 export const ROLES: Role[] = [
+  'superowner',
   'admin',
   'qa_lead',
   'qa_engineer',
@@ -27,6 +29,20 @@ export const ROLES: Role[] = [
   'viewer',
   'supervisor',
   'devops',
+];
+
+/** Roles with platform-wide visibility (mirrors backend isAdminRole). */
+export function isAdminRole(role: Role | undefined): boolean {
+  return role === 'admin' || role === 'superowner';
+}
+
+/** Roles selectable at self-registration (SEC-001 — no privileged roles). */
+export const SELF_REGISTER_ROLES: Role[] = [
+  'qa_engineer',
+  'automation_engineer',
+  'developer',
+  'reviewer',
+  'viewer',
 ];
 
 export type DocumentCategory =
@@ -46,6 +62,67 @@ export const DOCUMENT_CATEGORIES: DocumentCategory[] = [
 
 export type ProjectStatus = 'active' | 'archived';
 export type Runner = 'pytest' | 'playwright-test';
+
+// ---- LLM configuration (LOCAL Ollama vs CLOUD provider) --------------------
+
+export type LlmType = 'LOCAL' | 'CLOUD';
+
+export interface CloudProviderInfo {
+  id: string;
+  label: string;
+  /** Default OpenAI-compatible endpoint; empty = a custom base URL is required. */
+  defaultBaseUrl: string;
+  supportsCustomBaseUrl: boolean;
+  /** Suggestions only — the model input always accepts free text. */
+  exampleModels: string[];
+}
+
+/** Mirrors the backend provider registry (common/llm/providers.ts). */
+export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    supportsCustomBaseUrl: false,
+    exampleModels: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic (Claude)',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    supportsCustomBaseUrl: false,
+    exampleModels: ['claude-sonnet-4-5', 'claude-haiku-4-5'],
+  },
+  {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    supportsCustomBaseUrl: false,
+    exampleModels: ['openai/gpt-4o-mini', 'anthropic/claude-sonnet-4-5'],
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    supportsCustomBaseUrl: false,
+    exampleModels: ['llama-3.3-70b-versatile'],
+  },
+  {
+    id: 'custom',
+    label: 'Custom (OpenAI-compatible)',
+    defaultBaseUrl: '',
+    supportsCustomBaseUrl: true,
+    exampleModels: [],
+  },
+];
+
+/** Local (Ollama) model suggestions; the input accepts any pulled model. */
+export const LOCAL_MODEL_SUGGESTIONS = [
+  'qwen2.5:latest',
+  'qwen2.5-coder:latest',
+  'qwen3:8b',
+  'deepseek-r1:8b',
+];
 
 export type JobType =
   | 'analysis'
@@ -243,6 +320,8 @@ export interface ExecutionLogRow {
   testCaseId: string;
   testName: string;
   meta: Record<string, unknown> | null;
+  /** Explicit UTC ISO timestamp; matches the live payload's `ts`. */
+  ts?: string;
   createdAt: string;
 }
 
@@ -253,6 +332,9 @@ export interface PublicUser {
   email: string;
   role: Role;
   name: string;
+  /** false = disabled by the superowner; sign-in is blocked. */
+  isActive: boolean;
+  createdAt?: string;
 }
 
 export interface Project {
@@ -260,12 +342,20 @@ export interface Project {
   name: string;
   description: string;
   baseUrl: string;
+  /** API host for generated API tests; empty = same as baseUrl. */
+  apiBaseUrl: string;
   allowedDomains: string;
   repository: string;
   environment: string;
   status: ProjectStatus;
+  llmType: LlmType;
   llmModel: string;
   llmTemperature: number;
+  cloudProvider: string;
+  cloudModel: string;
+  cloudBaseUrl: string;
+  /** The key itself is never returned by the API — only this presence flag. */
+  hasCloudApiKey: boolean;
   runner: Runner;
   /** Zero-pad width for displayed TC IDs; 0 = TC-1 (FR-V3-TC-004). */
   tcZeroPad: number;
@@ -288,6 +378,17 @@ export interface WorkflowSummary {
 }
 
 export type ProjectWithSummary = Project & { workflowSummary: WorkflowSummary };
+
+/** Result of pushing generated automation to the project's GitHub repo. */
+export interface GitPushResult {
+  branch: 'main';
+  sha: string;
+  pushed: boolean;
+  mode: 'pushed' | 'no-changes';
+  repoUrl: string;
+  committed: string[];
+  warning?: string;
+}
 
 export interface SourceDocument {
   id: string;
@@ -695,11 +796,19 @@ export interface CreateProjectInput {
   name: string;
   description?: string;
   baseUrl?: string;
+  /** API host for generated API tests; empty = same as baseUrl. */
+  apiBaseUrl?: string;
   allowedDomains?: string;
   repository?: string;
   environment?: string;
+  llmType?: LlmType;
   llmModel?: string;
   llmTemperature?: number;
+  cloudProvider?: string;
+  cloudModel?: string;
+  /** Write-only: sealed server-side; blank on update keeps the saved key. */
+  cloudApiKey?: string;
+  cloudBaseUrl?: string;
   runner?: Runner;
   tcZeroPad?: number;
 }

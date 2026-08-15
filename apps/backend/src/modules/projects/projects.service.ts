@@ -23,9 +23,16 @@ import {
   TestResult,
 } from '../../entities';
 import { AuthUser } from '../../common/decorators';
-import { NotFoundAppException } from '../../common/errors';
+import { isAdminRole } from '../../common/access/permissions';
+import {
+  NotFoundAppException,
+  ValidationFailedException,
+} from '../../common/errors';
 import { AuditService } from '../audit/audit.service';
 import { MembershipService } from '../../common/access/membership.service';
+import { SecretBoxService } from '../../common/crypto/secret-box.service';
+import { cloudProviderById } from '../../common/llm/providers';
+import { normalizeRepoSlug } from '../git/repo-slug.util';
 import { CreateProjectDto, UpdateProjectDto } from './dto/project.dto';
 
 @Injectable()
@@ -37,7 +44,56 @@ export class ProjectsService {
     private readonly membership: MembershipService,
     private readonly audit: AuditService,
     private readonly dataSource: DataSource,
+    private readonly secretBox: SecretBoxService,
   ) {}
+
+  /**
+   * The sealed key column is select:false, but entities we just saved still
+   * hold it in memory — strip it so it can never serialize to a client.
+   */
+  private sanitize(project: Project): Project {
+    delete project.cloudApiKeyEnc;
+    return project;
+  }
+
+  /**
+   * The active LLM configuration must be complete before a project is created
+   * or switched (the UI enforces the same rules field-by-field).
+   */
+  private assertLlmConfigComplete(project: Project): void {
+    if (project.llmType !== 'CLOUD') return;
+    const missing: string[] = [];
+    if (!project.cloudProvider) missing.push('cloudProvider');
+    if (!project.cloudModel) missing.push('cloudModel');
+    if (!project.hasCloudApiKey) missing.push('cloudApiKey');
+    const provider = cloudProviderById(project.cloudProvider);
+    if (provider && !provider.defaultBaseUrl && !project.cloudBaseUrl) {
+      missing.push('cloudBaseUrl');
+    }
+    if (missing.length) {
+      throw new ValidationFailedException(
+        `Cloud LLM configuration is incomplete: ${missing.join(', ')} required`,
+        { missing },
+      );
+    }
+  }
+
+  /**
+   * Repositories are stored as the canonical 'owner/repo' slug — git push and
+   * CI dispatch both build GitHub URLs from it, so URL forms are normalized
+   * here rather than at every read site.
+   */
+  private canonicalRepository(value: string): string {
+    if (!value.trim()) return '';
+    const slug = normalizeRepoSlug(value);
+    if (!slug) {
+      throw new ValidationFailedException(
+        "Repository must be 'owner/repo' or a GitHub repository URL",
+        { repository: value },
+      );
+    }
+    return slug;
+  }
 
   async create(
     dto: CreateProjectDto,
@@ -48,16 +104,24 @@ export class ProjectsService {
       name: dto.name,
       description: dto.description ?? '',
       baseUrl: dto.baseUrl ?? '',
+      apiBaseUrl: dto.apiBaseUrl ?? '',
       allowedDomains: dto.allowedDomains ?? 'localhost,127.0.0.1',
-      repository: dto.repository ?? '',
+      repository: this.canonicalRepository(dto.repository ?? ''),
       environment: dto.environment ?? 'test',
       status: 'active',
+      llmType: dto.llmType ?? 'LOCAL',
       llmModel: dto.llmModel ?? '',
       llmTemperature: dto.llmTemperature ?? 0.1,
+      cloudProvider: dto.cloudProvider ?? '',
+      cloudModel: dto.cloudModel ?? '',
+      cloudBaseUrl: dto.cloudBaseUrl ?? '',
+      cloudApiKeyEnc: dto.cloudApiKey ? this.secretBox.seal(dto.cloudApiKey) : '',
+      hasCloudApiKey: !!dto.cloudApiKey,
       runner: dto.runner ?? 'pytest',
       tcZeroPad: dto.tcZeroPad ?? 0,
       createdBy: user.id,
     });
+    this.assertLlmConfigComplete(project);
     const saved = await this.projects.save(project);
     await this.membership.addMember(saved.id, user.id, user.role);
     await this.audit.record({
@@ -68,13 +132,13 @@ export class ProjectsService {
       resourceId: saved.id,
       projectId: saved.id,
       correlationId,
-      metadata: { name: saved.name },
+      metadata: { name: saved.name, llmType: saved.llmType },
     });
-    return saved;
+    return this.sanitize(saved);
   }
 
   async findAllForUser(user: AuthUser): Promise<Project[]> {
-    if (user.role === 'admin') {
+    if (isAdminRole(user.role)) {
       return this.projects.find({ order: { createdAt: 'DESC' } });
     }
     const memberships = await this.members.find({
@@ -280,19 +344,37 @@ export class ProjectsService {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.description !== undefined ? { description: dto.description } : {}),
       ...(dto.baseUrl !== undefined ? { baseUrl: dto.baseUrl } : {}),
+      ...(dto.apiBaseUrl !== undefined ? { apiBaseUrl: dto.apiBaseUrl } : {}),
       ...(dto.allowedDomains !== undefined
         ? { allowedDomains: dto.allowedDomains }
         : {}),
-      ...(dto.repository !== undefined ? { repository: dto.repository } : {}),
+      ...(dto.repository !== undefined
+        ? { repository: this.canonicalRepository(dto.repository) }
+        : {}),
       ...(dto.environment !== undefined ? { environment: dto.environment } : {}),
       ...(dto.status !== undefined ? { status: dto.status } : {}),
+      ...(dto.llmType !== undefined ? { llmType: dto.llmType } : {}),
       ...(dto.llmModel !== undefined ? { llmModel: dto.llmModel } : {}),
       ...(dto.llmTemperature !== undefined
         ? { llmTemperature: dto.llmTemperature }
         : {}),
+      ...(dto.cloudProvider !== undefined
+        ? { cloudProvider: dto.cloudProvider }
+        : {}),
+      ...(dto.cloudModel !== undefined ? { cloudModel: dto.cloudModel } : {}),
+      ...(dto.cloudBaseUrl !== undefined
+        ? { cloudBaseUrl: dto.cloudBaseUrl }
+        : {}),
       ...(dto.runner !== undefined ? { runner: dto.runner } : {}),
       ...(dto.tcZeroPad !== undefined ? { tcZeroPad: dto.tcZeroPad } : {}),
     });
+    // A blank cloudApiKey means "keep the saved key"; only a non-empty value
+    // replaces it (sealed, never stored in plaintext).
+    if (dto.cloudApiKey) {
+      project.cloudApiKeyEnc = this.secretBox.seal(dto.cloudApiKey);
+      project.hasCloudApiKey = true;
+    }
+    this.assertLlmConfigComplete(project);
     const saved = await this.projects.save(project);
     await this.audit.record({
       actor: user.email,
@@ -301,10 +383,11 @@ export class ProjectsService {
       resourceType: 'project',
       resourceId: id,
       projectId: id,
-      correlationId,
+      // Field names only — never DTO values (the API key must not reach audit).
       metadata: { changes: Object.keys(dto) },
+      correlationId,
     });
-    return saved;
+    return this.sanitize(saved);
   }
 
   /** Machine-readable export, no secrets (§10.2, §15.2). */

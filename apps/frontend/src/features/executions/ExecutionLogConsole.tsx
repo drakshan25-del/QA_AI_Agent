@@ -119,8 +119,11 @@ export function ExecutionLogConsole({
             testCaseId: l.testCaseId,
             testName: l.testName,
             meta: l.meta,
-            // Persisted rows carry `createdAt`; the live payload carries `ts`.
-            ts: l.createdAt,
+            // Persisted rows carry the same explicit UTC `ts` the live
+            // payload streams; `createdAt` is a legacy fallback whose zone
+            // handling is driver-dependent (it rendered UTC clock times as
+            // local for SQLite rows — the 5h45 skew in the log console).
+            ts: l.ts || l.createdAt,
           })),
         );
       } catch {
