@@ -1,4 +1,0 @@
-model_name,model_source,accuracy_mean,latency_mean_s,speed_mean,overall_mean,attempts,failures,failure_rate
-deepseek-r1:8b,pretrained,0.38,121.233,0.3828,0.3806,2,0,0.0
-qwen2.5-coder:latest,pretrained,0.8588,40.9228,0.542,0.7955,6,0,0.0
-qwen2.5:latest,pretrained,0.8627,32.5582,0.7501,0.8402,6,0,0.0

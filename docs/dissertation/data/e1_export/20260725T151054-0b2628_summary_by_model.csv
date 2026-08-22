@@ -1,2 +1,0 @@
-model_name,model_source,accuracy_mean,latency_mean_s,speed_mean,overall_mean,attempts,failures,failure_rate
-qwen2.5:latest,pretrained,0.7629,23.2697,0.5585,0.722,21,0,0.0

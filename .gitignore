@@ -29,3 +29,6 @@ logs/
 
 # Scratch
 Langchain_basics/
+
+# Local docs (dissertation drafts, module notes) — kept out of the repo
+docs/

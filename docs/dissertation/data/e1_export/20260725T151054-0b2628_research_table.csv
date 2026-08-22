@@ -1,3 +1,0 @@
-model_name,model_source,task,n_runs,accuracy,speed,latency_s,completeness,requirement_coverage,hallucination,code_quality,executability,consistency,reliability,robustness,research_score,satisfaction
-qwen2.5:latest,pretrained,test_cases,3,0.8448,0.4457,72.6333,,,,,,,,,,
-qwen2.5:latest,pretrained,test_plan,18,0.7493,0.5773,15.0424,,,,,,,,,,

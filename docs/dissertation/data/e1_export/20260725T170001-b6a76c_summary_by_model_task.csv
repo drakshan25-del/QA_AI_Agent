@@ -1,7 +1,0 @@
-model_name,model_source,task,n_runs,accuracy_mean,accuracy_std,latency_mean_s,tokens_per_s_mean,speed_mean,overall_mean
-qwen2.5-coder:latest,pretrained,automation,4,1.0,0.0,14.6152,94.9176,0.454,0.8908
-qwen2.5-coder:latest,pretrained,test_cases,4,0.8019,0.0646,119.3477,20.1313,0.3678,0.7151
-qwen2.5-coder:latest,pretrained,test_plan,4,0.6433,0.0346,12.0685,63.2111,0.3959,0.5938
-qwen2.5:latest,pretrained,automation,4,1.0,0.0,15.0632,96.511,0.4048,0.881
-qwen2.5:latest,pretrained,test_cases,4,0.8427,0.0653,57.6631,32.5611,0.928,0.8597
-qwen2.5:latest,pretrained,test_plan,4,0.6733,0.0,12.32,69.7939,0.3485,0.6084

@@ -1,8 +1,0 @@
-model_name,model_source,task,n_runs,accuracy_mean,accuracy_std,latency_mean_s,tokens_per_s_mean,speed_mean,overall_mean
-deepseek-r1:8b,pretrained,test_plan,2,0.38,0.0943,121.233,20.1777,0.3828,0.3806
-qwen2.5-coder:latest,pretrained,automation,2,1.0,0.0,15.3476,89.5732,0.4009,0.8802
-qwen2.5-coder:latest,pretrained,test_cases,2,0.9332,0.0488,91.6324,22.2082,0.245,0.7956
-qwen2.5-coder:latest,pretrained,test_plan,2,0.6433,0.0424,15.7884,47.1304,0.9802,0.7107
-qwen2.5:latest,pretrained,automation,2,1.0,0.0,14.5836,97.8475,0.5,0.9
-qwen2.5:latest,pretrained,test_cases,2,0.8481,0.0838,69.8923,26.8228,0.7555,0.8295
-qwen2.5:latest,pretrained,test_plan,2,0.74,0.0943,13.1988,66.6717,0.9948,0.791
