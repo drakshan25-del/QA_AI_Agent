@@ -1,0 +1,23 @@
+# Research-Question-to-Evidence Traceability Matrix — v1
+
+Confirmed research questions (source: student's RQ document, 7 Jul 2026; consistent with approved proposal CSC-40040, 17 Jun 2026):
+
+- **RQ1 (What):** What input artefacts, such as user stories, requirements, API specifications, and test execution logs, are required for an AI QA agent to generate useful testing outputs?
+- **RQ2 (Why):** Why is it important to evaluate AI-generated test outputs using measurable software quality metrics rather than relying only on human judgement?
+- **RQ3 (How):** How can the AI QA agent be integrated with testing tools such as Playwright, API testing frameworks, and GitHub Actions?
+
+| RQ | Sub-claim to be argued | Repository / material evidence | Dissertation location | Status |
+|---|---|---|---|---|
+| RQ1 | Multi-format requirement artefacts (Word/PDF/Excel/text/MD/JSON user stories, SRS, API docs) are ingested with per-segment traceability | `tools/file_ingestion.py`; `engine/parsers/excel.py`; `apps/backend/src/modules/documents/`; sample uploads in `apps/backend/evidence/documents/` | Ch5 §implementation; Ch7 | CONFIRMED |
+| RQ1 | Grounding artefacts (live DOM inventory, OpenAPI spec) measurably constrain generation; absence degrades it | `agents/page_inspector.py`; `agents/api_inspector.py`; in-loop gates in `agents/automation_agent.py`; `logs/preflight.log` §3 (DOM + 32-endpoint OpenAPI checks) | Ch5, Ch7, Ch8 | CONFIRMED (design + qualitative); quantitative ablation NOT run |
+| RQ1 | Execution logs/results feed back into the workflow (failure classification, regression baselines, retry feedback) | `agents/result_analysis_agent.py`; `app/services/regression.py`; retry feedback `agents/automation_agent.py:1523-1533`; 107 artifact run dirs | Ch5, Ch7 | CONFIRMED |
+| RQ1 | The fine-tuning dataset defines exactly which input artefacts map to which outputs | `finetune/seeds.py`, `gold.py`, `build_dataset.py` (prompts = production prompts) | Ch6 | CONFIRMED |
+| RQ2 | A measurable metric suite (completeness, coverage, consistency, hallucination, executability, code quality, reliability, speed) was designed and partially applied | branch `feature/llm-evaluation`: 13 metric modules, `rubric.py`; `eval_results.sqlite`; student's before/after evaluation spreadsheets | Ch6, Ch7 | PARTIAL — deterministic metrics ran; LLM-judge rows absent from DB; spreadsheet "LLM as a Judge"/"Human Verified" tables need provenance (see register §11) |
+| RQ2 | Deterministic gates catch defects human review or model self-assessment would miss (and demonstrably miss some) | `tools/code_validation.py`; gate self-check `app/services/validation.py:204-259`; gate-miss examples (`test_login_redirects.py` hard-coded creds; `test_transaction_page.py`) | Ch7, Ch8 | CONFIRMED (both directions) |
+| RQ2 | Human-judgement-only assessment is insufficient: fine-tune "looked good" per single-rater assessment yet hallucinated in operation | `work/eval_report.json` (positive, n=1) vs `run-headed.sh:30-33` (operational reversion, hallucination comment); coder val-loss overfit (`work/coder_train.log`) | Ch7, Ch8 | CONFIRMED — the dissertation's strongest RQ2 argument |
+| RQ3 | Playwright integration: generated page-object tests executed via pytest-playwright with live step telemetry | `engine/service/execution.py`; `step_events.py`; `automation/` framework; 105 junit.xml artefacts | Ch5, Ch7 | CONFIRMED |
+| RQ3 | API testing integration: browser-free httpx `api_client` fixture with dual-layer domain guard; OpenAPI-validated endpoints | `automation/conftest.py:208-255`; `_ensure_documented_endpoints`; 8 generated API/regression-API test files | Ch5, Ch7 | CONFIRMED |
+| RQ3 | GitHub Actions integration: five-suite marker-selected pipeline with regression gate; dispatch/import from the platform | `git show 5f9a6022^:.github/workflows/playwright-ci.yml`; `scripts/regression_gate.py`; `apps/backend/src/modules/ci/`; `git.service.ts` | Ch5, Ch7 | CONFIRMED as design + local execution; CI **run** evidence still required (gh run list / screenshots) |
+| RQ3 | Regression testing integrated end-to-end (baseline promotion, comparison, gate) | `app/services/regression.py`; regression module + frontend page; V2_CONTRACT §1.2/§3 | Ch5, Ch7 | CONFIRMED |
+
+Claims that will NOT be made (no evidence): SUS/user-satisfaction study with participants; statistical significance; CI executions (unless evidence supplied); seeded-defect detection rate (unless the small experiment is run); HumanEval/HumanEval+ improvements and `qwen3.5-qa:9b` / `qwen2.5-coder-1.5b-codealpaca` results (unless provenance supplied — see register §11).

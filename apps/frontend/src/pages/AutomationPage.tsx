@@ -426,7 +426,7 @@ export function AutomationPage(): JSX.Element {
         title="Automation"
         subtitle="Generated code, validation, traceability and execution plan (FR-AUT-*)"
         actions={
-          <div className={L.row} style={{ gap: 8, alignItems: 'end' }}>
+          <div className={L.controlsRow}>
             <Select
               label="Test type"
               value={testType}
@@ -436,7 +436,7 @@ export function AutomationPage(): JSX.Element {
               <option value="ui">UI</option>
               <option value="api">API</option>
             </Select>
-            <label className={L.row} style={{ gap: 4, alignItems: 'center' }}>
+            <label className={s.suiteToggle}>
               <input
                 type="checkbox"
                 aria-label="Regression suite"

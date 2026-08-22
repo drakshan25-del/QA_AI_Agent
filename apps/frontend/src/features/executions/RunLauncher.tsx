@@ -66,7 +66,7 @@ export function RunLauncher({
 
   return (
     <div className={L.stack} style={{ gap: 8 }}>
-      <div className={L.row} style={{ flexWrap: 'wrap', gap: 8, alignItems: 'end' }}>
+      <div className={L.controlsRow}>
         <Select
           label="Browser (FR-V3-EXE-003)"
           value={browser}
@@ -110,7 +110,7 @@ export function RunLauncher({
       </div>
 
       {showAdvanced && (
-        <div className={L.row} style={{ flexWrap: 'wrap', gap: 8, alignItems: 'end' }}>
+        <div className={L.controlsRow}>
           <label>
             <span className={L.muted} style={{ display: 'block', fontSize: 12 }}>
               Timeout (s)

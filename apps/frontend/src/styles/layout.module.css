@@ -40,6 +40,19 @@
   justify-content: space-between;
   flex-wrap: wrap;
 }
+/* Inline toolbar of labeled fields plus buttons: bottom-aligned so buttons
+   line up with the field controls, not their labels. */
+.controlsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+/* The Field wrapper carries a form-stack bottom margin; cancel it so
+   controls share a baseline with the adjacent buttons. */
+.controlsRow > div {
+  margin-bottom: 0;
+}
 .grid {
   display: grid;
   gap: 16px;

@@ -1,0 +1,7 @@
+model_name,model_source,task,n_runs,accuracy,speed,latency_s,completeness,requirement_coverage,hallucination,code_quality,executability,consistency,reliability,robustness,research_score,satisfaction
+qwen2.5-coder:latest,pretrained,automation,4,1.0,0.454,14.6152,0.6,0.5715,1.0,0.85,1.0,99.73,1.0,,0.8505,
+qwen2.5-coder:latest,pretrained,test_cases,4,0.8019,0.3678,119.3477,0.9667,0.9285,1.0,,,80.51,1.0,,0.8623,
+qwen2.5-coder:latest,pretrained,test_plan,4,0.6433,0.3959,12.0685,0.85,0.6785,1.0,,,83.22,1.0,,0.7668,
+qwen2.5:latest,pretrained,automation,4,1.0,0.4048,15.0632,1.0,0.5358,1.0,1.0,1.0,93.0,1.0,,0.9027,
+qwen2.5:latest,pretrained,test_cases,4,0.8427,0.928,57.6631,1.0,0.9285,1.0,,,86.28,1.0,,0.9235,
+qwen2.5:latest,pretrained,test_plan,4,0.6733,0.3485,12.32,0.9,0.6782,1.0,,,74.67,1.0,,0.7682,

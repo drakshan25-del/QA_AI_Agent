@@ -1,0 +1,8 @@
+model_name,model_source,task,n_runs,accuracy,speed,latency_s,completeness,requirement_coverage,hallucination,code_quality,executability,consistency,reliability,robustness,research_score,satisfaction
+deepseek-r1:8b,pretrained,test_plan,2,0.38,0.3828,121.233,,,,,,,,,,
+qwen2.5-coder:latest,pretrained,automation,2,1.0,0.4009,15.3476,,,,,,,,,,
+qwen2.5-coder:latest,pretrained,test_cases,2,0.9332,0.245,91.6324,,,,,,,,,,
+qwen2.5-coder:latest,pretrained,test_plan,2,0.6433,0.9802,15.7884,,,,,,,,,,
+qwen2.5:latest,pretrained,automation,2,1.0,0.5,14.5836,,,,,,,,,,
+qwen2.5:latest,pretrained,test_cases,2,0.8481,0.7555,69.8923,,,,,,,,,,
+qwen2.5:latest,pretrained,test_plan,2,0.74,0.9948,13.1988,,,,,,,,,,

@@ -40,3 +40,11 @@
   font-size: 12.5px;
   word-break: break-all;
 }
+.suiteToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* Matches the select control's vertical padding + border so the toggle
+     text lines up with the dropdown text. */
+  padding: 9px 0;
+}

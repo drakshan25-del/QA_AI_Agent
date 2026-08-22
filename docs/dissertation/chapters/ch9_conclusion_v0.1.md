@@ -1,0 +1,26 @@
+<!-- EDITORIAL NOTE (not dissertation content, excluded from word count):
+Draft v0.1 of Chapter 9. Target 700 counted words. Style: British English, third-person passive, past tense. -->
+
+# Chapter 9 — Conclusion, Limitations and Future Work
+
+## 9.1 Conclusions against the objectives
+
+The project set out to design, implement and empirically evaluate an AI quality-assurance agent for SaaS applications, and the six objectives were met to the following, deliberately differentiated, degrees.
+
+The engineering objectives were substantially achieved. A three-tier agentic platform was built that transformed uploaded requirement documents into reviewed test plans, cases and automation code (O1), with generation grounded in live page and API evidence and gated behind twelve in-loop checks and an independent deterministic security gate (O2). Integration with Playwright, a guarded API-testing harness, regression comparison and a GitHub Actions design was implemented and exercised locally, producing 107 retained execution-evidence bundles (O3); hosted CI execution remained unevidenced and is claimed only as designed. The governance objective (O6) was met in a form the agentic literature rarely reports: versioned approval, cascade invalidation, deterministic marker algebra and audit were not features around the pipeline but the pipeline's load-bearing structure, and their effectiveness was demonstrated in both directions — gates caught the hallucination classes they encoded and demonstrably missed pattern variants they did not.
+
+The research objectives produced findings whose value lies partly in their asymmetry. The pre-trained comparison (O4) established that the general-purpose 7B model, not the code-specialised or reasoning variants, was the strongest platform default, because natural-language test-case generation dominated the workload and reasoning latency was prohibitive. The fine-tuning study (O5) delivered a genuinely mixed result: the planner adaptation converged cleanly and improved plan justification and case production, while the coder adaptation over-fitted a 43-example corpus, appeared improved on narrow held-out metrics, and degraded in deployed use — a contradiction that was only detectable because the system measured rejection deterministically. That contradiction is the dissertation's central empirical contribution, and it answers RQ2 concretely: judgement said the fine-tune worked; measurement showed where and why it did not.
+
+## 9.2 Limitations
+
+The limitations stated throughout are gathered here without dilution. All system-level evidence derives from a single synthetic demonstration application; the page inspector was blind to client-rendered interfaces; the seeded-defect detection experiment, the LLM-judge dimension and the usability study were designed but not executed; E2's held-out cells were single runs with no variance estimate; the two evaluation strands were never unified, so no rubric-comparable before/after scores exist; E1's raw generation texts were not preserved; hosted CI runs were not evidenced; and the substantial UI-scanner extension remained unmerged. No statistical significance was claimed anywhere, and results excluded for provenance reasons were excluded entirely rather than caveated.
+
+## 9.3 Future work
+
+Five extensions follow directly from the evidence. First, the seeded-defect detection run — executing the approved suites under each defect toggle — would convert the built-in ground truth into a measured detection rate at trivial cost, and should precede all else. Second, the coder fine-tune should be re-exported from its best validation checkpoint (retained on disk at iteration 43) and re-evaluated under the deployed gates, testing directly whether checkpoint selection, not fine-tuning per se, caused the operational regression. Third, the fine-tuned models should be registered in the E1 metric framework so that before/after claims become rubric-comparable, with the judge executed and calibrated against the biases catalogued in the literature. Fourth, browser-based scanning — effectively, merging and hardening the unmerged scanner branch — would extend grounding to client-rendered applications, the largest single generalisation barrier. Fifth, the governance model invites study in its own right: measuring how approval-gate friction trades against defect escape across teams would connect this architecture to the human factors literature that the present, participant-free project could not address.
+
+## 9.4 Closing statement
+
+The project demonstrated that a locally hosted language model, embedded in an architecture that grounds its inputs, gates its outputs and reserves irreversible decisions for people, can produce working, traceable and honestly measured test automation for a SaaS application — and that the measurement layer is not an adjunct to such a system but its epistemic core. Where the model's apparent competence and its measured behaviour diverged, only the measurement noticed. That, in the end, is the argument for building quality assurance around evidence rather than impression, whether the tester is a human or a machine.
+
+<!-- EDITORIAL NOTE: counted words ≈ 680. -->
